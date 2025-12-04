@@ -2267,30 +2267,8 @@ if st.session_state.mode == "code":
     st.divider()
 
 # =====================================================================
-# Example Questions (lightbulb button)
+# Example Questions & Chat Input (side by side)
 # =====================================================================
-
-# Custom CSS to make expander open upward and reduce spacing
-st.markdown("""
-<style>
-    /* Reduce spacing between expander and chat input */
-    div[data-testid="stExpander"] {
-        margin-bottom: 0.5rem !important;
-    }
-    /* Make content expand upward (position absolute) */
-    div[data-testid="stExpander"][data-baseweb="accordion"] details[open] > div:last-child {
-        position: absolute;
-        bottom: 100%;
-        left: 0;
-        right: 0;
-        background: var(--background-color);
-        z-index: 999;
-        border: 1px solid rgba(49, 51, 63, 0.2);
-        border-radius: 0.5rem;
-        margin-bottom: 0.5rem;
-    }
-</style>
-""", unsafe_allow_html=True)
 
 # Example questions for quick access
 EXAMPLE_QUESTIONS = [
@@ -2301,12 +2279,26 @@ EXAMPLE_QUESTIONS = [
     "'Sir roberts fortune a novel', for what purpose he was confident of his own powers of cheating the uncle, and managing?"
 ]
 
-# Show example questions in an expander (default closed, opens upward)
-with st.expander("💡 Example Questions", expanded=False):
+# Initialize session state for showing example questions
+if 'show_examples' not in st.session_state:
+    st.session_state.show_examples = False
+
+# Create columns: small button on left, chat input takes remaining space
+col_button, col_input = st.columns([1, 9])
+
+with col_button:
+    # Lightbulb button to toggle example questions
+    if st.button("💡", key="toggle_examples", help="Example Questions"):
+        st.session_state.show_examples = not st.session_state.show_examples
+
+# Show example questions if toggled (below the button)
+if st.session_state.show_examples:
+    st.markdown("**Click a question to auto-send:**")
     for i, question in enumerate(EXAMPLE_QUESTIONS):
         if st.button(question, key=f"example_q_{i}", use_container_width=True):
             # Auto-fill and send the question
             st.session_state.pending_prompt = question
+            st.session_state.show_examples = False  # Hide after selection
             st.rerun()
 
 # Chat input - always display it
