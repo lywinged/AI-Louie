@@ -1,0 +1,276 @@
+groups:
+  # LLM API 告警规则
+  - name: llm_alerts
+    interval: 30s
+    rules:
+      # 高错误率告警
+      - alert: HighLLMErrorRate
+        expr: |
+          (
+            sum(rate(llm_request_total{status="error"}[5m])) /
+            sum(rate(llm_request_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "LLM API 错误率过高"
+          description: "LLM API 错误率超过 5% (当前: {{ $value | humanizePercentage }})"
+
+      # 极高错误率 - 严重告警
+      - alert: CriticalLLMErrorRate
+        expr: |
+          (
+            sum(rate(llm_request_total{status="error"}[5m])) /
+            sum(rate(llm_request_total[5m]))
+          ) > 0.15
+        for: 2m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "LLM API 错误率严重过高"
+          description: "LLM API 错误率超过 15% (当前: {{ $value | humanizePercentage }})"
+
+      # 高延迟告警
+      - alert: HighLLMLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(llm_request_duration_seconds_bucket[5m])) by (le, endpoint)
+          ) > 10
+        for: 10m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "LLM API 延迟过高"
+          description: "端点 {{ $labels.endpoint }} 的 P95 延迟超过 10 秒 (当前: {{ $value }}s)"
+
+      # 成本超支告警
+      - alert: HighLLMCost
+        expr: |
+          sum(increase(llm_cost_usd_total[1h])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "LLM API 成本过高"
+          description: "最近 1 小时 LLM 成本超过 $10 (当前: ${{ $value | humanize }})"
+
+      # 极高成本 - 严重告警
+      - alert: CriticalLLMCost
+        expr: |
+          sum(increase(llm_cost_usd_total[1h])) > 50
+        for: 1m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "LLM API 成本严重超支"
+          description: "最近 1 小时 LLM 成本超过 $50 (当前: ${{ $value | humanize }})"
+
+      # Token 使用异常告警
+      - alert: AbnormalTokenUsage
+        expr: |
+          sum(rate(llm_token_usage_total[5m])) > 10000
+        for: 10m
+        labels:
+          severity: info
+          component: llm
+        annotations:
+          summary: "LLM Token 使用量异常"
+          description: "Token 使用速率超过 10000/s (当前: {{ $value | humanize }}/s)"
+
+  # RAG 系统告警
+  - name: rag_alerts
+    interval: 30s
+    rules:
+      # RAG 质量下降告警
+      - alert: LowRAGFaithfulness
+        expr: |
+          avg(rag_faithfulness_score) < 0.7
+        for: 15m
+        labels:
+          severity: warning
+          component: rag
+        annotations:
+          summary: "RAG 答案忠实度过低"
+          description: "RAG 答案忠实度低于 0.7 (当前: {{ $value | humanizePercentage }})"
+
+      # RAG 答案相关性低
+      - alert: LowRAGRelevancy
+        expr: |
+          avg(rag_answer_relevancy_score) < 0.6
+        for: 15m
+        labels:
+          severity: warning
+          component: rag
+        annotations:
+          summary: "RAG 答案相关性过低"
+          description: "RAG 答案相关性低于 0.6 (当前: {{ $value | humanizePercentage }})"
+
+      # RAG 延迟过高
+      - alert: HighRAGLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(rag_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          component: rag
+        annotations:
+          summary: "RAG 查询延迟过高"
+          description: "RAG P95 延迟超过 2 秒 (当前: {{ $value }}s)"
+
+      # 嵌入延迟告警
+      - alert: HighEmbeddingLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(embedding_duration_seconds_bucket[5m])) by (le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: rag
+        annotations:
+          summary: "嵌入生成延迟过高"
+          description: "嵌入 P95 延迟超过 1 秒 (当前: {{ $value }}s)"
+
+      # 缓存命中率低
+      - alert: LowCacheHitRate
+        expr: |
+          (
+            sum(rate(embedding_total{status="cache_hit"}[10m])) /
+            sum(rate(embedding_total[10m]))
+          ) < 0.3
+        for: 20m
+        labels:
+          severity: info
+          component: rag
+        annotations:
+          summary: "RAG 缓存命中率过低"
+          description: "缓存命中率低于 30% (当前: {{ $value | humanizePercentage }})"
+
+  # 推理服务告警
+  - name: inference_alerts
+    interval: 30s
+    rules:
+      # 推理服务错误率高
+      - alert: HighInferenceErrorRate
+        expr: |
+          sum(rate(inference_error_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: inference
+        annotations:
+          summary: "推理服务错误率过高"
+          description: "服务 {{ $labels.service }} 错误率超过 1/s ({{ $value | humanize }}/s)"
+
+      # 熔断器打开
+      - alert: CircuitBreakerOpen
+        expr: |
+          circuit_breaker_state_gauge > 0
+        for: 2m
+        labels:
+          severity: critical
+          component: inference
+        annotations:
+          summary: "熔断器已打开"
+          description: "服务 {{ $labels.service }} 的熔断器已打开"
+
+      # 推理延迟过高
+      - alert: HighInferenceLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(inference_request_duration_seconds_bucket[5m])) by (service, le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: inference
+        annotations:
+          summary: "推理服务延迟过高"
+          description: "服务 {{ $labels.service }} 的 P95 延迟超过 500ms (当前: {{ $value }}s)"
+
+  # 系统健康告警
+  - name: system_health
+    interval: 30s
+    rules:
+      # API 无响应
+      - alert: APIDown
+        expr: |
+          up{job="ai-louie-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Backend API 服务停止"
+          description: "Backend API 无法访问"
+
+      # Qdrant 无响应
+      - alert: QdrantDown
+        expr: |
+          up{job="qdrant"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Qdrant 服务停止"
+          description: "Qdrant 向量数据库无法访问"
+
+      # ONNX 推理服务无响应
+      - alert: InferenceServiceDown
+        expr: |
+          up{job="onnx-inference"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "ONNX 推理服务停止"
+          description: "ONNX 推理服务无法访问"
+
+      # Frontend UI 服务无响应
+      - alert: FrontendDown
+        expr: |
+          probe_success{job="frontend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Frontend UI 服务停止"
+          description: "Streamlit 前端服务无法访问"
+
+      # 总请求量异常低
+      - alert: LowRequestVolume
+        expr: |
+          sum(rate(llm_request_total[10m])) < 0.01
+        for: 30m
+        labels:
+          severity: info
+          component: system
+        annotations:
+          summary: "API 请求量异常低"
+          description: "最近 10 分钟 API 请求量低于 0.01/s，可能服务异常"
+
+      # 总体成功率过低
+      - alert: LowOverallSuccessRate
+        expr: |
+          (
+            sum(rate(llm_request_total{status="success"}[10m])) /
+            sum(rate(llm_request_total[10m]))
+          ) < 0.95
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "系统总体成功率过低"
+          description: "成功率低于 95% (当前: {{ $value | humanizePercentage }})"

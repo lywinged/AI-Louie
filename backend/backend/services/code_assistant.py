@@ -41,7 +41,7 @@ class CodeAssistant:
             client_kwargs["base_url"] = base_url
 
         self.client = AsyncOpenAI(**client_kwargs)
-        self.model_name = os.getenv("OPENAI_MODEL", "Gpt4o")
+        self.model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self.token_counter = get_token_counter()
 
         # Initialize learning system
@@ -96,7 +96,7 @@ class CodeAssistant:
         analysis_context: Optional[Dict[str, Any]] = None
         analysis_used_for_attempt: Optional[Dict[str, Any]] = None
         initial_plan: Optional[Dict[str, Any]] = await self._analyze_initial_plan(request)
-        include_samples = bool(getattr(request, "include_samples", False))
+        include_samples = bool(getattr(request, "include_samples", True))
 
         if initial_plan:
             summary = initial_plan.get("summary") or initial_plan.get("plan_overview")
@@ -270,8 +270,18 @@ class CodeAssistant:
         final_samples_raw = current_test_result.samples if current_test_result else None
         final_samples = final_samples_raw if include_samples else None
 
+        # Generate natural language explanation of the code
+        explanation = await self._generate_explanation(
+            code=current_code,
+            task=request.task,
+            language=request.language,
+            test_passed=current_test_result.passed,
+            retries=len(retry_attempts)
+        )
+
         return CodeResponse(
             code=current_code,
+            explanation=explanation,
             language=request.language,
             test_passed=current_test_result.passed,
             final_test_result=current_test_result,
@@ -619,7 +629,11 @@ Please respond in JSON with the following keys:
         # If include_samples is True, inject print statements before assertions
         code_to_run = code
         if include_samples:
+            logger.info(f"include_samples=True, injecting print statements")
             code_to_run = self._inject_assertion_prints(code)
+            logger.info(f"Injected code length: {len(code_to_run)} (original: {len(code)})")
+        else:
+            logger.info(f"include_samples=False, skipping print injection")
 
         # Create temporary file
         with tempfile.NamedTemporaryFile(
@@ -695,18 +709,15 @@ Please respond in JSON with the following keys:
 
     def _inject_assertion_prints(self, code: str) -> str:
         """
-        Inject print statements before assert statements in test functions.
-        For each assert statement like 'assert func(x) == expected',
-        add 'print(func(x))' before it.
+        Inject print statements in test functions to show program output.
+        Handles both plain assert statements and unittest.TestCase assertions.
+        For each assertion, prints the actual result being tested.
         """
         try:
             tree = ast.parse(code)
         except Exception as exc:
             logger.warning(f"Failed to parse code for print injection: {exc}")
             return code
-
-        # Track modifications
-        modified = False
 
         class AssertPrintInjector(ast.NodeTransformer):
             def visit_FunctionDef(self, node):
@@ -715,29 +726,63 @@ Please respond in JSON with the following keys:
                     return node
 
                 new_body = []
-                for stmt in node.body:
-                    if isinstance(stmt, ast.Assert):
-                        # Extract the expression being tested
-                        test_expr = stmt.test
+                injected_any = False
 
-                        # For comparison assertions (e.g., assert x == y)
+                for stmt in node.body:
+                    # Handle plain assert statements
+                    if isinstance(stmt, ast.Assert):
+                        test_expr = stmt.test
                         if isinstance(test_expr, ast.Compare):
                             left = test_expr.left
-                            # Create print statement for the left side
-                            print_call = ast.Expr(
-                                value=ast.Call(
-                                    func=ast.Name(id='print', ctx=ast.Load()),
-                                    args=[left],
-                                    keywords=[]
-                                )
-                            )
-                            # Add print before assert
-                            new_body.append(print_call)
+                            self._add_print_statements(new_body, left)
+                            injected_any = True
+
+                    # Handle unittest assertions (self.assertEqual, etc.)
+                    elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+                        call = stmt.value
+                        # Check if it's a self.assert* call
+                        if (isinstance(call.func, ast.Attribute) and
+                            isinstance(call.func.value, ast.Name) and
+                            call.func.value.id == 'self' and
+                            call.func.attr.startswith('assert') and
+                            len(call.args) >= 1):
+                            # Print the first argument (the actual value being tested)
+                            self._add_print_statements(new_body, call.args[0])
+                            injected_any = True
 
                     new_body.append(stmt)
 
                 node.body = new_body
                 return node
+
+            def _add_print_statements(self, new_body, expr):
+                """Helper to add print statements with separators"""
+                # Add separator
+                new_body.append(ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id='print', ctx=ast.Load()),
+                        args=[ast.Constant(value="\n=== Program Output ===")],
+                        keywords=[]
+                    )
+                ))
+
+                # Print the actual result
+                new_body.append(ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id='print', ctx=ast.Load()),
+                        args=[expr],
+                        keywords=[]
+                    )
+                ))
+
+                # Add closing separator
+                new_body.append(ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id='print', ctx=ast.Load()),
+                        args=[ast.Constant(value="===================\n")],
+                        keywords=[]
+                    )
+                ))
 
         injector = AssertPrintInjector()
         modified_tree = injector.visit(tree)
@@ -1016,6 +1061,69 @@ edition = "2021"
         code = re.sub(r'\n{3,}', '\n\n', code)
 
         return code
+
+    async def _generate_explanation(
+        self,
+        code: str,
+        task: str,
+        language: Language,
+        test_passed: bool,
+        retries: int
+    ) -> str:
+        """
+        Generate a natural language explanation of the generated code.
+
+        Args:
+            code: The generated code
+            task: Original task description
+            language: Programming language used
+            test_passed: Whether tests passed
+            retries: Number of retries needed
+
+        Returns:
+            Natural language explanation
+        """
+        try:
+            status_msg = "The code passes all tests!" if test_passed else "Note: The code has test failures."
+            retry_msg = f" (generated after {retries} {'retry' if retries == 1 else 'retries'})" if retries > 0 else ""
+
+            prompt = f"""You are a helpful coding assistant. Explain the following {language} code in natural language.
+
+**Original Task:** {task}
+
+**Generated Code:**
+```{language}
+{code}
+```
+
+**Status:** {status_msg}{retry_msg}
+
+Please provide a concise, friendly explanation (2-4 sentences) that covers:
+1. What the code does (high-level purpose)
+2. Key approach or algorithm used
+3. Any notable features or edge cases handled
+
+Keep it conversational and user-friendly!"""
+
+            messages = [{"role": "user", "content": prompt}]
+            messages = sanitize_messages(messages)
+
+            response = await self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=300
+            )
+
+            explanation = response.choices[0].message.content.strip()
+            logger.info(f"✅ Generated explanation ({len(explanation)} chars)")
+            return explanation
+
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to generate explanation: {e}")
+            # Fallback to basic explanation
+            return f"I've generated {language} code for your task: {task[:100]}{'...' if len(task) > 100 else ''}. " \
+                   f"{'The code passes all tests and is ready to use!' if test_passed else 'Please review the test results for more details.'}"
 
 
 # Singleton instance

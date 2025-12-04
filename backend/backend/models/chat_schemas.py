@@ -2,7 +2,7 @@
 Data models for Chat API (Task 3.1)
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -29,6 +29,10 @@ class ChatResponse(BaseModel):
     total_tokens: int = Field(..., description="Total tokens used")
     cost_usd: float = Field(..., description="Estimated cost in USD")
     latency_ms: float = Field(..., description="Response latency in milliseconds")
+    governance_context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="AI Governance context including risk tier, criteria, and checkpoints"
+    )
 
 
 class ChatHistory(BaseModel):

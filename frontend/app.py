@@ -20,6 +20,17 @@ from datetime import datetime
 from pydantic import BaseModel
 import re
 
+# Governance display components
+from components.governance_display import (
+    display_governance_status,
+    display_governance_checkpoints,
+    display_governance_flowchart,
+    show_governance_info
+)
+
+# User feedback components
+from components.feedback_ui import render_feedback_buttons
+
 
 DEBUG_LOG_PATH = Path("/tmp/frontend_debug.log")
 
@@ -114,9 +125,9 @@ def detect_mode_from_prompt(text: Optional[str]) -> Optional[str]:
 
 
 MODE_ACTIVATION_MESSAGES = {
-    "rag": """📚 **RAG Q&A Mode Activated**\n\nI'll help you search and answer questions from the document collection.\n\n**Examples:**\n- \"Who wrote DADDY TAKE ME SKATING?\"\n- \"Tell me about American frontier history\"\n- 'Sir roberts fortune a novel', for what purpose he was confident of his own powers of cheating the uncle, and managing?\n\nType 'q'(quit) to exit this mode.\n""",
+    "rag": """📚 **RAG Q&A Mode Activated**\n\nI'll help you search and answer questions from the document collection.\n- \"**Examples:**"\n- \"Who wrote DADDY TAKE ME SKATING?\"\n- \"Tell me about American frontier history\"\n- \"'Sir roberts fortune a novel', show me roles relationship"\n- \"'Sir roberts fortune a novel', list all the roles\"\n- \"'Sir roberts fortune a novel', for what purpose he was confident of his own powers of cheating the uncle, and managing?"\n- \"Type 'q'(quit) to exit this mode."\n- """,
     "trip": """✈️ **Trip Planning Mode Activated**\n\nI'll help you plan your perfect trip! I need to collect four key pieces of information:\n- 📍 Where do you want to go?\n- 🛫 Where are you leaving from?\n- 📅 How many days?\n- 💰 What's your budget?\n\n**Examples:**\n- \"I want to go to Tokyo from Auckland for 5 days with $2000\"\n- \"Plan a trip to Paris, 1 week, budget 3000 NZD, from Wellington\"\n\nType 'q'(quit) to exit this mode.\n""",
-    "code": """💻 **Code Generation Mode Activated**\n\nI'll generate code with automated tests and self-healing capabilities!\n- Type 'q'(quit) to exit this mode.\n* Examples:\n- 1 \"Write a function to check if a number is prime\"\n- 2 \"Create a binary search algorithm in Python\"\n- 3 \"Implement a quick sort in JavaScript\"\n- 4 \"Classic Problem: “\n""",
+    "code": """💻 **Code Generation Mode Activated**\n\nI'll generate code with automated tests and self-healing capabilities!\n- \"Type 'q'(quit) to exit this mode.\n* Examples:\n- 1 \"Write a function to check if a number is prime\"\n- 2 \"Create a binary search algorithm in Python\"\n- 3 \"Implement a quick sort in JavaScript\"\n- 4 \"Classic Problem: “\n""",
 }
 
 
@@ -133,9 +144,14 @@ def maybe_append_mode_intro(mode: str) -> None:
 try:
     from dotenv import load_dotenv
 
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
+    # Try local frontend/.env first, then repo root .env
+    env_paths = [
+        Path(__file__).resolve().parent / ".env",
+        Path(__file__).resolve().parent.parent / ".env",
+    ]
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
 except ImportError as e:
     st.error(f"Import error: {e}")
 
@@ -227,8 +243,8 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8888").rstrip("/")
 MODEL_PRICING = {
     "gpt-3.5-turbo": {"prompt": 0.0015, "completion": 0.0020},
     "gpt-3.5-turbo-0125": {"prompt": 0.0015, "completion": 0.0020},
-    "Gpt4o": {"prompt": 0.005, "completion": 0.015},
-    "Gpt4o-mini": {"prompt": 0.00015, "completion": 0.0006},
+    "gpt-4o-mini": {"prompt": 0.005, "completion": 0.015},
+    "gpt-4o-mini-mini": {"prompt": 0.00015, "completion": 0.0006},
 }
 
 CURRENCY_TO_NZD = {
@@ -357,7 +373,7 @@ def fetch_seed_status() -> Optional[Dict[str, Any]]:
 def load_warmup_questions() -> List[str]:
     """
     Load warmup questions from RAG evaluation files.
-    Extracts 5 questions from each of the 3 eval files for a total of 15 questions.
+    Extracts 1 question from each of the 3 eval files for a total of 3 questions.
     Falls back to generic questions if files are not found.
     """
     eval_files = [
@@ -377,15 +393,15 @@ def load_warmup_questions() -> List[str]:
             with open(full_path) as f:
                 data = json.load(f)
 
-            # Extract questions (format might vary)
+            # Extract questions (format might vary) - only take 1 per file
             if isinstance(data, list):
-                questions = [item.get('question', item.get('query', '')) for item in data[:15]]
+                questions = [item.get('question', item.get('query', '')) for item in data[:1]]
             elif isinstance(data, dict) and 'questions' in data:
-                questions = data['questions'][:15]
+                questions = data['questions'][:1]
             else:
                 # Try to find questions in nested structure
                 questions = []
-                for key, value in list(data.items())[:15]:
+                for key, value in list(data.items())[:1]:
                     if isinstance(value, dict) and 'question' in value:
                         questions.append(value['question'])
                     elif isinstance(value, dict) and 'query' in value:
@@ -396,17 +412,15 @@ def load_warmup_questions() -> List[str]:
             # Silently skip if file can't be loaded
             continue
 
-    # If we got at least 15 real questions, use them
-    if len(warmup_questions) >= 15:
-        return warmup_questions[:15]
+    # If we got at least 3 real questions, use them
+    if len(warmup_questions) >= 3:
+        return warmup_questions[:3]
 
-    # Otherwise fall back to generic questions (5 total)
+    # Otherwise fall back to generic questions (3 total)
     return [
         "What is Shaun O'Day of Ireland about?",
-        "Who wrote Shaun O'Day of Ireland?.",
+        "Who wrote Shaun O'Day of Ireland?",
         "What is Musical Myths and Facts about?",
-        "According to 'the-ink-stain-tache-d-encre-complete', what happens when his moral studies of provincial life under the form of\nnovels and romances became appreciated?",
-        "In 'dorothy-south-a-love-story-of-virginia-just-before-the-war', why he sat down not?",
     ]
 
 
@@ -427,6 +441,130 @@ def render_rag_controls(target) -> None:
 
     if "rag_config_error" in st.session_state:
         target.caption(f"⚠️ Using default limits ({st.session_state.rag_config_error})")
+
+    # RAG Strategy Selection
+    if "rag_strategy" not in st.session_state:
+        st.session_state.rag_strategy = "smart"  # Default to Smart Auto-Select
+
+    strategy_options = {
+        "smart": "🎯 Smart Auto-Select (auto)",
+        "standard": "📝 Standard RAG (basic vector search)",
+        "hybrid": "🔍 Hybrid Search (BM25 + vector)",
+        "iterative": "🔁 Iterative Self-RAG (confidence-based)",
+        "stream": "⚡ Streaming RAG (real-time SSE)",
+        "graph": "🕸️ Graph RAG (relationship extraction)",
+        "table": "📊 Table RAG (structured data)"
+    }
+
+    # Detailed descriptions for each strategy
+    strategy_descriptions = {
+        "smart": """**Smart Auto-Select** uses Thompson Sampling (multi-armed bandit) to automatically choose the best RAG strategy for your query.
+
+**Covers 4 strategies:**
+- 🔍 **Hybrid RAG**: Simple factual queries
+- 🔁 **Iterative Self-RAG**: Complex analytical queries
+- 🕸️ **Graph RAG**: Relationship/character queries
+- 📊 **Table RAG**: Structured data queries
+
+The system learns from each query and adapts to your usage patterns.""",
+        "standard": """**Standard RAG** uses basic dense vector similarity search.
+
+**Pipeline:**
+1. Query → Embedding → Vector search
+2. Retrieve top-k chunks by cosine similarity
+3. Generate answer with LLM
+
+Best for: Simple semantic search queries.""",
+        "hybrid": """**Hybrid Search** combines keyword matching (BM25) with semantic vector search.
+
+**Pipeline:**
+1. BM25 keyword search (30% weight)
+2. Vector similarity search (70% weight)
+3. Score fusion with RRF (Reciprocal Rank Fusion)
+4. Cross-encoder reranking
+5. LLM answer generation
+
+Best for: Queries with specific keywords or terms.""",
+        "iterative": """**Iterative Self-RAG** uses confidence-based iterative refinement.
+
+**Pipeline:**
+1. Initial retrieval + answer generation
+2. Confidence self-assessment
+3. If confidence < threshold: refine query and iterate
+4. Max 3 iterations with early stopping
+
+Best for: Complex analytical questions requiring multiple retrieval rounds.""",
+        "stream": """**Streaming RAG** provides real-time answer generation with Server-Sent Events.
+
+**Features:**
+- Token-by-token streaming response
+- Lower perceived latency
+- Same retrieval quality as Standard RAG
+
+Best for: Interactive chat experiences.""",
+        "graph": """**Graph RAG** extracts entities and relationships for graph-based retrieval.
+
+**Pipeline:**
+1. Extract query entities with LLM
+2. JIT (Just-In-Time) graph building from relevant chunks
+3. Graph traversal to find connected entities
+4. Combine graph context + vector retrieval
+5. Generate relationship-aware answers
+
+Best for: Character relationships, entity connections, "who knows whom" queries.""",
+        "table": """**Table RAG** structures retrieved information into markdown tables.
+
+**Pipeline:**
+1. Analyze query intent (comparison/list/aggregation)
+2. Hybrid retrieval for relevant data
+3. Extract and structure data into table format
+4. Generate summary with table context
+
+Best for: Comparison queries, data listing, structured information extraction."""
+    }
+
+    selected_strategy_label = target.selectbox(
+        "RAG Strategy",
+        options=list(strategy_options.values()),
+        index=list(strategy_options.keys()).index(st.session_state.rag_strategy),
+        help="Choose which RAG pipeline to use. Select a strategy to see detailed description below.",
+        key="rag_strategy_selector"
+    )
+
+    # Reverse map to get strategy key
+    reverse_strategy_map = {v: k for k, v in strategy_options.items()}
+    st.session_state.rag_strategy = reverse_strategy_map[selected_strategy_label]
+
+    # Display detailed description for selected strategy
+    current_strategy = st.session_state.rag_strategy
+    if current_strategy in strategy_descriptions:
+        target.info(strategy_descriptions[current_strategy])
+
+    target.caption(f"Selected: {st.session_state.rag_strategy}")
+
+    # Search Scope Selection (Multi-Collection Search)
+    if "search_scope" not in st.session_state:
+        st.session_state.search_scope = "all"  # Default to search all collections
+
+    scope_options = {
+        "all": "🌐 All Documents (system + uploads)",
+        "user_only": "📁 My Uploads Only",
+        "system_only": "📚 System Data Only"
+    }
+
+    selected_scope_label = target.selectbox(
+        "Search Scope",
+        options=list(scope_options.values()),
+        index=list(scope_options.keys()).index(st.session_state.search_scope),
+        help="Choose which data sources to search",
+        key="search_scope_selector"
+    )
+
+    # Reverse map to get scope key
+    reverse_scope_map = {v: k for k, v in scope_options.items()}
+    st.session_state.search_scope = reverse_scope_map[selected_scope_label]
+
+    target.caption(f"Searching: {st.session_state.search_scope}")
 
     vector_value = target.slider(
         "Vector Candidate Limit",
@@ -450,11 +588,11 @@ def render_rag_controls(target) -> None:
     st.session_state.rag_content_limit = content_value
 
     labels_map = {
-        "auto": "Auto (adaptive)",
-        "primary": "Primary (BGE-m3-int8)",
-        "fallback": "Fallback (MiniLM-int8)",
-        "remote": "Remote",
-        "custom": "Custom",
+        "auto": "🔄 Auto (Adaptive - Query-based)",
+        "primary": "🎯 BGE Models (High Accuracy)",
+        "fallback": "⚡ MiniLM Models (Fast)",
+        "remote": "☁️ Remote",
+        "custom": "⚙️ Custom",
     }
     displayed_options = [labels_map.get(opt, opt.title()) for opt in reranker_options]
     current_choice = st.session_state.rag_reranker_choice
@@ -463,10 +601,10 @@ def render_rag_controls(target) -> None:
     current_index = reranker_options.index(current_choice)
 
     selected_label = target.selectbox(
-        "Reranker",
+        "Model Adapter (Embedding & Reranker)",
         displayed_options,
         index=current_index,
-        help="Choose which reranker to apply for this session",
+        help="Choose model quality/speed trade-off: Auto switches based on query difficulty, BGE for accuracy, MiniLM for speed",
         key="rag_reranker_choice_select",
     )
     reverse_map = {labels_map.get(opt, opt.title()): opt for opt in reranker_options}
@@ -477,8 +615,29 @@ def render_rag_controls(target) -> None:
         st.session_state.rag_last_reranker = None
 
     if st.session_state.rag_last_reranker is not None and st.session_state.rag_last_reranker != new_reranker_choice:
-        # Reranker changed, perform warm-up with 15 queries from eval data
-        with st.spinner(f"🔥 Warming up {selected_label} reranker (15 queries)..."):
+        # Model adapter changed - call switch-mode endpoint if primary/fallback
+        if new_reranker_choice in ["primary", "fallback"]:
+            with st.spinner(f"🔄 Switching to {selected_label}..."):
+                try:
+                    switch_resp = requests.post(
+                        f"{BACKEND_URL}/api/rag/switch-mode",
+                        params={"mode": new_reranker_choice},
+                        timeout=10
+                    )
+                    if switch_resp.ok:
+                        switch_data = switch_resp.json()
+                        st.success(
+                            f"✅ Switched to {selected_label}\n\n"
+                            f"Embedding: {switch_data.get('embedding', '—')}\n\n"
+                            f"Reranker: {switch_data.get('reranker', '—')}"
+                        )
+                    else:
+                        st.warning(f"⚠️ Mode switch failed: {switch_resp.text}")
+                except Exception as e:
+                    st.warning(f"⚠️ Mode switch failed: {e}")
+
+        # Perform warm-up with 3 queries from eval data
+        with st.spinner(f"🔥 Warming up {selected_label} (3 queries)..."):
             try:
                 # Load real eval questions for warm-up
                 warmup_questions = load_warmup_questions()
@@ -496,7 +655,7 @@ def render_rag_controls(target) -> None:
                         },
                         timeout=30
                     )
-                st.success(f"✅ {selected_label} reranker fully warmed up!")
+                st.success(f"✅ {selected_label} fully warmed up!")
                 time.sleep(0.5)
             except Exception as e:
                 st.warning(f"⚠️ Warm-up failed: {e}")
@@ -550,6 +709,123 @@ def render_rag_controls(target) -> None:
             f"- Reranker: `{format_model_label(models.get('reranker'))}`\n"
             f"- LLM: `{models.get('llm', '—')}`"
         )
+
+    # Document Upload Section
+    target.markdown("---")
+    target.markdown("### 📤 Document Upload")
+
+    # Initialize upload stats in session state
+    if "upload_stats" not in st.session_state:
+        st.session_state.upload_stats = {
+            "total_files": 0,
+            "total_chunks": 0,
+            "last_upload": None
+        }
+
+    # Tab for file upload and text paste
+    upload_tab, paste_tab = target.tabs(["📁 Upload File", "📝 Paste Text"])
+
+    with upload_tab:
+        uploaded_file = st.file_uploader(
+            "Choose a file",
+            type=["pdf", "txt", "docx", "xlsx", "xls", "csv"],
+            help="Upload PDF, TXT, Word, Excel, or CSV files to add to the knowledge base",
+            key="file_uploader"
+        )
+        use_separate_collection = st.checkbox(
+            "Store uploads in a separate user collection",
+            value=False,
+            help="Leave unchecked to merge with the main collection so uploads are searchable with existing data.",
+            key="use_separate_collection_checkbox",
+        )
+
+        if uploaded_file is not None:
+            if st.button("🚀 Upload and Vectorize", key="upload_button"):
+                with st.spinner(f"Processing {uploaded_file.name}..."):
+                    try:
+                        response = requests.post(
+                            f"{BACKEND_URL}/api/rag/upload-file",
+                            params={"use_separate_collection": str(use_separate_collection).lower()},
+                            files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)},
+                            timeout=120
+                        )
+
+                        if response.status_code == 200:
+                            result = response.json()
+                            collection = result.get("collection")
+
+                            # Update stats
+                            st.session_state.upload_stats["total_files"] += 1
+                            st.session_state.upload_stats["total_chunks"] += result["total_chunks"]
+                            st.session_state.upload_stats["last_upload"] = uploaded_file.name
+
+                            st.success(f"✅ Successfully processed {uploaded_file.name}")
+                            info_message = f"📊 Created {result['total_chunks']} chunks from {result['documents_processed']} document(s)"
+                            if collection:
+                                info_message += f" → stored in collection `{collection}`"
+                            st.info(info_message)
+                        else:
+                            st.error(f"❌ Upload failed: {response.text}")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+    with paste_tab:
+        pasted_text = st.text_area(
+            "Paste your text here",
+            height=200,
+            placeholder="Paste document content here...",
+            help="Paste text content to add directly to the knowledge base",
+            key="text_paste_area"
+        )
+
+        text_title = st.text_input(
+            "Document title (optional)",
+            placeholder="My Document",
+            key="text_title_input"
+        )
+
+        if st.button("🚀 Add to Knowledge Base", key="paste_button"):
+            if pasted_text.strip():
+                with st.spinner("Processing pasted text..."):
+                    try:
+                        # Send text to backend via upload endpoint
+                        title = text_title.strip() or "Pasted Document"
+                        response = requests.post(
+                            f"{BACKEND_URL}/api/rag/upload",
+                            json={
+                                "title": title,
+                                "content": pasted_text,
+                                "source": "user_paste",
+                                "metadata": {}
+                            },
+                            timeout=60
+                        )
+
+                        if response.status_code in (200, 201):
+                            result = response.json()
+
+                            # Update stats
+                            st.session_state.upload_stats["total_files"] += 1
+                            st.session_state.upload_stats["total_chunks"] += result["num_chunks"]
+                            st.session_state.upload_stats["last_upload"] = title
+
+                            st.success(f"✅ Successfully added '{title}'")
+                            st.info(f"📊 Created {result['num_chunks']} chunks")
+                        else:
+                            st.error(f"❌ Failed to add text: {response.text}")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+            else:
+                st.warning("⚠️ Please paste some text first")
+
+    # Display upload statistics
+    if st.session_state.upload_stats["total_files"] > 0:
+        target.markdown("**Upload Statistics**")
+        col_u1, col_u2 = target.columns(2)
+        col_u1.metric("Files Uploaded", st.session_state.upload_stats["total_files"])
+        col_u2.metric("Total Chunks", st.session_state.upload_stats["total_chunks"])
+        if st.session_state.upload_stats["last_upload"]:
+            target.caption(f"Last upload: {st.session_state.upload_stats['last_upload']}")
 
 
 # =====================================================================
@@ -751,6 +1027,20 @@ def parse_constraints_from_text(text: str, existing: Optional[TripConstraints] =
 def _is_quit(msg: Optional[str]) -> bool:
     return bool(msg) and msg.strip().lower() in {"q", "quit", "exit", "cancel"}
 
+def _cleanup_mode_state(old_mode: str) -> None:
+    """Clean up state when switching away from a mode"""
+    if old_mode == "trip":
+        st.session_state.trip_constraints = TripConstraints()
+        st.session_state.trip_last_plan = None
+        st.session_state.awaiting_confirmation = False
+    elif old_mode == "code":
+        st.session_state.code_last_request = None
+        st.session_state.code_pending_auto = False
+        st.session_state.code_force_language = None
+    elif old_mode == "rag":
+        # RAG doesn't have much state to clean, but reset awaiting_confirmation
+        st.session_state.awaiting_confirmation = False
+
 def has_potential_missing_info(text: str) -> bool:
     """Determine if text may contain unextracted city/location information"""
     import re
@@ -837,7 +1127,7 @@ Rules:
         ])
 
         response = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "Gpt4o"),
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=messages,
             temperature=0,
             max_tokens=200
@@ -1076,6 +1366,111 @@ if "first_activation" not in st.session_state:
 if "awaiting_confirmation" not in st.session_state:
     st.session_state.awaiting_confirmation = False
 
+# Mode activation messages
+MODE_ACTIVATION_MESSAGES = {
+    "rag": """📚 **RAG Q&A Mode Activated**
+
+I'll help you search and answer questions from the document collection.
+
+---
+
+- **Examples:**
+
+- "Who wrote DADDY TAKE ME SKATING?"
+- "Tell me about American frontier history"
+- "'Sir roberts fortune a novel', show me roles relationship"
+- "'Sir roberts fortune a novel', list all the roles"
+- "'Sir roberts fortune a novel', for what purpose he was confident of his own powers of cheating the uncle, and managing?"
+
+---
+
+- Type 'q'(quit) to exit this mode.
+""",
+    "trip": """✈️ **Trip Planning Mode Activated**
+
+I'll help you plan your perfect trip! I need to collect four key pieces of information:
+- 📍 Where do you want to go?
+- 🛫 Where are you leaving from?
+- 📅 How many days?
+- 💰 What's your budget?
+
+---
+
+**Examples:**
+
+- "I want to go to Tokyo from Auckland for 5 days with $2000"
+- "Plan a trip to Paris, 1 week, budget 3000 NZD, from Wellington"
+
+---
+
+Type 'q'(quit) to exit this mode.
+""",
+    "code": """💻 **Code Generation Mode Activated**
+
+I'll generate code with automated tests and self-healing capabilities!
+
+---
+
+**Examples:**
+
+1. "Write a function to check if a number is prime"
+2. "Create a binary search algorithm in Python"
+3. "Implement a quick sort in JavaScript"
+4. Classic Problem - Most Frequent Character:
+   ```
+   def most_frequent_char(s: str) -> str:
+       # Return the character that appears most frequently in the string s.
+       # If there are multiple characters with the same highest frequency,
+       # return the one that comes first in alphabetical order.
+   ```
+   Example: `most_frequent_char("abracadabra")` → Expected: `a`
+
+---
+
+Type 'q'(quit) to exit this mode.
+""",
+}
+
+def switch_mode(new_mode: str, always_show_message: bool = False):
+    """Helper function to switch modes and optionally show activation message"""
+    old_mode = st.session_state.mode
+    _cleanup_mode_state(old_mode)
+    st.session_state.mode = new_mode
+    st.session_state.pending_prompt = "__MODE_ACTIVATED__"
+
+    # Show message if it's first activation OR always_show_message is True
+    if st.session_state.first_activation.get(new_mode, False) or always_show_message:
+        if new_mode in MODE_ACTIVATION_MESSAGES:
+            append_chat_history("assistant", MODE_ACTIVATION_MESSAGES[new_mode])
+        if st.session_state.first_activation.get(new_mode, False):
+            st.session_state.first_activation[new_mode] = False
+
+# Show Smart RAG warm-up status only if weights are missing
+def show_smart_status():
+    try:
+        resp = requests.get(f"{BACKEND_URL}/api/rag/smart-status", timeout=3)
+        return resp.json()
+    except Exception:
+        return {}
+
+smart_status = show_smart_status()
+
+# Only show warm-up notifications if bandit state was cold-started (no weights found)
+# Check if bandit state is using default uniform priors (cold start)
+is_cold_start = smart_status.get("cold_start", False)
+
+# Notify in main panel only if cold start AND warm-up completes
+if "smart_warmup_notified" not in st.session_state:
+    st.session_state.smart_warmup_notified = False
+
+if is_cold_start and smart_status.get("enabled") and smart_status.get("done") and not st.session_state.smart_warmup_notified:
+    st.session_state.smart_warmup_notified = True
+    st.success("✅ Smart RAG warm-up completed - bandit weights are now available")
+elif is_cold_start and smart_status.get("enabled") and smart_status.get("started") and not smart_status.get("done"):
+    total = smart_status.get("total") or 0
+    completed = smart_status.get("completed") or 0
+    progress = f"{completed}/{total}" if total else f"{completed}"
+    st.warning(f"⚠️ No bandit weights found - warm-up running in background... ({progress}). You can keep using the app.")
 if "pending_prompt" not in st.session_state:
     st.session_state.pending_prompt = None
 
@@ -1194,6 +1589,9 @@ if "rag_reranker_choice" not in st.session_state:
 elif st.session_state.rag_reranker_choice not in reranker_options:
     st.session_state.rag_reranker_choice = "fallback" if "fallback" in reranker_options else (reranker_options[0] if reranker_options else "auto")
 
+if "show_governance_info" not in st.session_state:
+    st.session_state.show_governance_info = False
+
 
 # =====================================================================
 # Sidebar - Service Status and Evaluation Dashboard
@@ -1231,6 +1629,20 @@ with st.sidebar:
     st.markdown(f"{rag_status} **RAG Q&A** {rag_active}")
     st.markdown(f"{agent_status} **Trip Planning** {agent_active}")
     st.markdown(f"{code_status} **Code Generation** {code_active}")
+
+    st.markdown("---")
+
+    # AI Governance Info
+    st.markdown("### 🛡️ AI Governance")
+    if st.button("📖 View Governance Framework", use_container_width=True):
+        st.session_state.show_governance_info = True
+
+    # AI Governance Dashboard Link
+    st.link_button(
+        "📊 AI Governance Dashboard",
+        "http://localhost:3000/d/ai-governance-dashboard/ai-governance-dashboard?orgId=1&refresh=10s",
+        use_container_width=True
+    )
 
     st.markdown("---")
 
@@ -1707,15 +2119,29 @@ with st.sidebar:
 # Main Interface
 # =====================================================================
 
-st.title("🤖 AI Assistant - Complete CLI Replication")
+st.title("🤖 AI-Louie - Enterprise-Grade AI System with Governance")
 
 st.markdown("""
-Welcome! I'm your AI assistant providing three powerful services:
-- 📚 **RAG Q&A**: Ask questions about documents
-- ✈️ **Trip Planning**: Plan your perfect trip with intelligent constraint collection
-- 💻 **Code Generation**: Generate self-healing code with tests
+Welcome to **AI-Louie**, an advanced AI system with enterprise-level capabilities:
 
-Use the quick buttons below to activate a service, or just type naturally and I'll understand your intent!
+### 🎯 Core Services
+- 📚 **Smart RAG Q&A**: Multi-strategy retrieval (Hybrid, Iterative, Graph, Table) with Thompson Sampling optimization
+- ✈️ **Trip Planning**: Intelligent itinerary generation with constraint-aware planning
+- 💻 **Code Generation**: Self-healing code with automatic testing and validation
+
+### 🛡️ AI Governance & Observability
+- **12 Active Governance Criteria** (G1-G12) for Air NZ compliance
+- Real-time **Prometheus metrics** & **Grafana dashboards**
+- Distributed tracing with **Jaeger** for full request observability
+- Privacy controls with PII detection & evidence contracts
+
+### 🚀 Advanced Features
+- **Answer caching** with semantic & TF-IDF matching
+- **Query classification** for intelligent routing
+- **ONNX-optimized inference** (INT8 quantization)
+- **Multi-arm bandit** for strategy selection
+
+Use the buttons below or chat naturally - I'll route your request intelligently!
 """)
 
 # =====================================================================
@@ -1726,92 +2152,17 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     if st.button("📚 RAG Q&A", use_container_width=True):
-        st.session_state.mode = "rag"
-        # Set pending_prompt to special marker to activate EARLY ROUTING GUARD
-        st.session_state.pending_prompt = "__MODE_ACTIVATED__"
-        if st.session_state.first_activation["rag"]:
-            append_chat_history(
-                "assistant",
-                """📚 **RAG Q&A Mode Activated**
-
-I'll help you search and answer questions from the document collection.
-
-**Examples:**
-- "Who wrote DADDY TAKE ME SKATING?"
-- "Tell me about American frontier history"
-- 'Sir roberts fortune a novel', for what purpose he was confident of his own powers of cheating the uncle, and managing?"
-
--  Type 'q'(quit) to exit this mode.
-""",
-            )
-            st.session_state.first_activation["rag"] = False
+        switch_mode("rag", always_show_message=False)
         st.rerun()
 
 with col2:
     if st.button("✈️ Trip Planning", use_container_width=True):
-        st.session_state.mode = "trip"
-        # Set pending_prompt to special marker to activate EARLY ROUTING GUARD
-        # This prevents the mode from being reset during rerun
-        st.session_state.pending_prompt = "__MODE_ACTIVATED__"
-        if st.session_state.first_activation["trip"]:
-            append_chat_history(
-                "assistant",
-                """✈️ **Trip Planning Mode Activated**
-
-I'll help you plan your perfect trip! I need to collect four key pieces of information:
-- 📍 Where do you want to go?
-- 🛫 Where are you leaving from?
-- 📅 How many days?
-- 💰 What's your budget?
-
-**Examples:**
-- "I want to go to Tokyo from Auckland for 5 days with $2000"
-- "Plan a trip to Paris, 1 week, budget 3000 NZD, from Wellington"
-
-Type 'q'(quit) to exit this mode.
-""",
-            )
-            st.session_state.first_activation["trip"] = False
+        switch_mode("trip", always_show_message=False)
         st.rerun()
 
 with col3:
     if st.button("💻 Code Generation", use_container_width=True):
-        st.session_state.mode = "code"
-        # Set pending_prompt to special marker to activate EARLY ROUTING GUARD
-        st.session_state.pending_prompt = "__MODE_ACTIVATED__"
-        if st.session_state.first_activation["code"]:
-            append_chat_history(
-                "assistant",
-                """💻 **Code Generation Mode Activated**
-
-I'll generate code with automated tests and self-healing capabilities!
-- Type 'q'(quit) to exit this mode. 
-* Examples:
-- 1 "Write a function to check if a number is prime"
-- 2 "Create a binary search algorithm in Python"
-- 3 "Implement a quick sort in JavaScript"
-- 4 "Classic Problem: “
-
-* Most Frequent Character:
-
-* Implement the function:
-
-- def most_frequent_char(s: str) -> str:
-    
-* Return the character that appears most frequently in the string s.
-    If there are multiple characters with the same highest frequency,
-    return the one that comes first in alphabetical order.
-    
-
-- Example Input and Output (Expected Result):
-- print(most_frequent_char("abracadabra"))
-- Expected Output: a
-
-
-
-""",
-            )
-            st.session_state.first_activation["code"] = False
+        switch_mode("code", always_show_message=False)
         st.rerun()
 
 st.markdown("---")
@@ -1830,14 +2181,41 @@ for message in st.session_state.messages:
         st.markdown(content)
 
 # Auto-scroll to bottom of chat after new messages
+# Use a unique key tied to message count to force re-execution
+scroll_key = f"scroll_{len(st.session_state.messages)}_{id(st.session_state.messages)}"
 st.markdown(
-    """
+    f"""
     <script>
-        var chatContainer = window.parent.document.querySelector('section.main');
-        if (chatContainer) {
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
+        // Scroll to bottom with multiple attempts for reliability
+        function scrollToBottom() {{
+            var containers = [
+                window.parent.document.querySelector('section.main'),
+                window.parent.document.querySelector('[data-testid="stAppViewContainer"]'),
+                window.parent.document.querySelector('.main'),
+                window.parent.document.querySelector('[data-testid="stApp"]')
+            ];
+            containers.forEach(function(container) {{
+                if (container) {{
+                    container.scrollTop = container.scrollHeight;
+                    container.scrollTo({{top: container.scrollHeight, behavior: 'smooth'}});
+                }}
+            }});
+            // Also scroll the window itself as a fallback
+            window.scrollTo({{top: document.body.scrollHeight, behavior: 'smooth'}});
+        }}
+
+        // Run immediately and with staggered retries (covers rerun + slow renders)
+        scrollToBottom();
+        setTimeout(scrollToBottom, 80);
+        setTimeout(scrollToBottom, 180);
+        setTimeout(scrollToBottom, 350);
+        setTimeout(scrollToBottom, 650);
+        setTimeout(scrollToBottom, 1100);
+
+        // Re-run after next paint to catch late-added elements
+        requestAnimationFrame(scrollToBottom);
     </script>
+    <!-- {scroll_key} -->
     """,
     unsafe_allow_html=True
 )
@@ -1888,6 +2266,49 @@ if st.session_state.mode == "code":
 
     st.divider()
 
+# =====================================================================
+# Example Questions (lightbulb button)
+# =====================================================================
+
+# Custom CSS to make expander open upward and reduce spacing
+st.markdown("""
+<style>
+    /* Reduce spacing between expander and chat input */
+    div[data-testid="stExpander"] {
+        margin-bottom: 0.5rem !important;
+    }
+    /* Make content expand upward (position absolute) */
+    div[data-testid="stExpander"][data-baseweb="accordion"] details[open] > div:last-child {
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        right: 0;
+        background: var(--background-color);
+        z-index: 999;
+        border: 1px solid rgba(49, 51, 63, 0.2);
+        border-radius: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Example questions for quick access
+EXAMPLE_QUESTIONS = [
+    "Who wrote DADDY TAKE ME SKATING?",
+    "Tell me about American frontier history",
+    "'Sir roberts fortune a novel', show me roles relationship",
+    "'Sir roberts fortune a novel', list all the roles",
+    "'Sir roberts fortune a novel', for what purpose he was confident of his own powers of cheating the uncle, and managing?"
+]
+
+# Show example questions in an expander (default closed, opens upward)
+with st.expander("💡 Example Questions", expanded=False):
+    for i, question in enumerate(EXAMPLE_QUESTIONS):
+        if st.button(question, key=f"example_q_{i}", use_container_width=True):
+            # Auto-fill and send the question
+            st.session_state.pending_prompt = question
+            st.rerun()
+
 # Chat input - always display it
 prompt = early_prompt
 user_input = st.chat_input("Type your message...")
@@ -1910,6 +2331,14 @@ elif user_input:
     prompt = user_input
     print(f"📥 USER INPUT RECEIVED: {prompt!r}")
     debug_log(f"[input] new prompt={prompt!r}")
+
+    # If user explicitly wants RAG mode, switch without using the text as a query
+    rag_triggers = {"rag", "use rag", "rag mode", "enter rag", "switch to rag"}
+    if prompt.strip().lower() in rag_triggers:
+        switch_mode("rag", always_show_message=True)
+        debug_log(f"[intent] rag activation via text prompt")
+        st.rerun()
+
     # Display user message
     append_chat_history("user", prompt)
     with st.chat_message("user"):
@@ -1918,7 +2347,7 @@ elif user_input:
 
     detected_mode = detect_mode_from_prompt(prompt)
     if detected_mode and detected_mode not in {None, st.session_state.mode}:
-        st.session_state.mode = detected_mode
+        switch_mode(detected_mode, always_show_message=True)
         st.session_state.pending_prompt = prompt
         debug_log(f"[intent] detected={detected_mode} pending set")
         st.rerun()
@@ -1938,8 +2367,8 @@ debug_log(
 
 if current_mode == "rag":
     if prompt and _is_quit(prompt):
+        _cleanup_mode_state("rag")
         st.session_state.mode = "general"
-        st.session_state.awaiting_confirmation = False
         append_chat_history("assistant", "👋 Exited RAG mode.")
         st.rerun()
 
@@ -1989,11 +2418,10 @@ if current_mode == "rag":
         backend_ready = wait_for_backend_ready() if seed_ready else False
 
         if seed_ready and backend_ready:
-            with st.spinner("🔥 Warming up RAG models (15 queries from eval data)..."):
+            with st.spinner("🔥 Warming up RAG models (3 queries from eval data)..."):
                 try:
-                    # Load real eval questions for warm-up (3 from each of 3 eval files = 9 total)
+                    # Load real eval questions for warm-up (1 from each of 3 eval files = 3 total)
                     # This ensures warm-up queries are similar to actual usage
-                    # Need 15 queries to fully warm up: Embedding JIT, Qdrant cache, Reranker session
                     # Use fallback (MiniLM) for CPU performance
                     warmup_questions = load_warmup_questions()
 
@@ -2010,9 +2438,9 @@ if current_mode == "rag":
                             },
                             timeout=30
                         )
-                        # Show progress every 5 queries
-                        if i % 5 == 0:
-                            st.toast(f"🔥 Warming up... {i}/15 queries", icon="🔥")
+                        # Show progress for each query
+                        if i % 1 == 0:
+                            st.toast(f"🔥 Warming up... {i}/3 queries", icon="🔥")
 
                     st.session_state.rag_warmed_up = True
                     st.success("✅ Models fully warmed up! Ready for fast queries.")
@@ -2041,237 +2469,1192 @@ if current_mode == "rag":
     # =====================================================================
 
     if current_mode == "rag" and prompt and prompt != "__MODE_ACTIVATED__":  # Only process if we have a real prompt
+        used_streaming = False
         with st.chat_message("assistant"):
-            with st.spinner("🔍 Searching documents..."):
-                try:
-                    payload = {
-                        "question": prompt,
-                        "top_k": 5,
-                        "include_timings": True,
+            try:
+                # Get selected RAG strategy
+                rag_strategy = st.session_state.get("rag_strategy", "standard")
+
+                # Map strategy to endpoint and techniques
+                strategy_config = {
+                    "standard": {
+                        "endpoint": "ask",
+                        "techniques": [
+                            ("📊 Query Embedding", "Dense Vector Embedding"),
+                            ("🔍 Vector Similarity Search", "Cosine Similarity (Qdrant)"),
+                            ("🎯 Cross-Encoder Reranking", "MiniLM-L6 Cross-Encoder"),
+                            ("🤖 LLM Answer Generation", "GPT-4o with Retrieved Context")
+                        ]
+                    },
+                    "hybrid": {
+                        "endpoint": "ask-hybrid",
+                        "techniques": [
+                            ("🏷️ Query Classification", "Query Type Detection"),
+                            ("💾 Semantic Cache Lookup", "Strategy Cache (90% token savings)"),
+                            ("📊 Query Embedding", "Dense Vector Embedding"),
+                            ("🔍 Hybrid Search", "BM25 (30%) + Vector (70%) Fusion"),
+                            ("🎯 Cross-Encoder Reranking", "Score-based Ranking"),
+                            ("🤖 LLM Answer Generation", "GPT-4o with Context"),
+                            ("💾 Update Cache Strategy", "Save Successful Strategy")
+                        ]
+                    },
+                    "iterative": {
+                        "endpoint": "ask-iterative",
+                        "techniques": [
+                            ("🏷️ Query Classification", "Query Type Detection"),
+                            ("📊 Initial Query Embedding", "Dense Vector"),
+                            ("🔍 Hybrid Retrieval", "BM25 + Vector Fusion"),
+                            ("🎯 Rerank Retrieved Chunks", "Cross-Encoder"),
+                            ("🤖 Generate Initial Answer", "GPT-4o First Pass"),
+                            ("🔁 Self-RAG Verification", "Confidence Check + Iteration")
+                        ]
+                    },
+                    "smart": {
+                        "endpoint": "ask-smart",
+                        "techniques": [
+                            ("🏷️ Query Analysis", "Intent Detection"),
+                            ("🎯 Strategy Selection", "Bandit over Hybrid/Iterative/Graph/Table"),
+                            ("⚡ Execute Pipeline", "Dynamic Pipeline Execution")
+                        ]
+                    },
+                    "graph": {
+                        "endpoint": "ask-graph",
+                        "techniques": [
+                            ("🔍 Extract Query Entities", "Entity Detection from Query"),
+                            ("🕸️ JIT Graph Building", "On-demand Knowledge Graph Construction"),
+                            ("🔗 Relationship Extraction", "Entity Relationship Mapping"),
+                            ("📊 Graph Traversal", "Find Connected Entities"),
+                            ("🔎 Hybrid Retrieval", "Graph Context + Vector Search"),
+                            ("🤖 LLM Answer Generation", "GPT-4o with Graph Context")
+                        ]
+                    },
+                    "table": {
+                        "endpoint": "ask-table",
+                        "techniques": [
+                            ("🎯 Extract Query Intent", "Determine comparison/list/aggregation"),
+                            ("🔍 Hybrid Retrieval", "Vector + BM25 Search"),
+                            ("📊 Data Structuring", "Extract tabular information"),
+                            ("📝 Table Generation", "Format as markdown table"),
+                            ("🤖 LLM Answer Generation", "GPT-4o with table context")
+                        ]
+                    },
+                    "stream": {
+                        "endpoint": "ask-stream",
+                        "techniques": [
+                            ("📊 Query Embedding", "Dense Vector Embedding"),
+                            ("🔍 Vector Similarity Search", "Cosine Similarity (Qdrant)"),
+                            ("🎯 Cross-Encoder Reranking", "MiniLM-L6 Cross-Encoder"),
+                            ("⚡ Streaming Generation", "Token-by-token SSE Response")
+                        ]
                     }
+                }
 
-                    reranker_choice = st.session_state.get("rag_reranker_choice")
-                    if reranker_choice:
-                        payload["reranker"] = reranker_choice
+                config = strategy_config[rag_strategy]
+                endpoint = config["endpoint"]
+                techniques = config["techniques"]
 
-                    vector_limit_payload = int(max(vector_min, min(vector_max, st.session_state.get("rag_vector_limit", vector_min))))
-                    payload["vector_limit"] = vector_limit_payload
+                payload = {
+                    "question": prompt,
+                    "top_k": 5,
+                    "include_timings": True,
+                }
 
-                    content_limit_payload = int(max(content_min, min(content_max, st.session_state.get("rag_content_limit", content_default))))
-                    payload["content_char_limit"] = content_limit_payload
+                # Add search scope to metadata
+                search_scope = st.session_state.get("search_scope", "all")
+                payload["metadata"] = {
+                    "search_scope": search_scope,
+                    "requested_strategy": rag_strategy,
+                }
 
+                # When searching user uploads (or both), use multi-collection endpoint
+                # EXCEPT for smart strategy, which needs its own logic (bandit, graph cues, etc.)
+                endpoint_override = None
+                if search_scope in ("all", "user_only") and rag_strategy in {"standard", "hybrid", "iterative"}:
+                    endpoint_override = "search-multi-collection"
+
+                reranker_choice = st.session_state.get("rag_reranker_choice")
+                if reranker_choice:
+                    payload["reranker"] = reranker_choice
+
+                vector_limit_payload = int(max(vector_min, min(vector_max, st.session_state.get("rag_vector_limit", vector_min))))
+                payload["vector_limit"] = vector_limit_payload
+
+                content_limit_payload = int(max(content_min, min(content_max, st.session_state.get("rag_content_limit", content_default))))
+                payload["content_char_limit"] = content_limit_payload
+
+                # For Smart and Graph modes, use non-streaming endpoint to get complete pipeline info
+                if rag_strategy == "smart":
+                    st.markdown("**1️⃣ 🏷️ Query Analysis**")
+                    st.caption("Analyzing query intent and complexity")
+                    time.sleep(0.3)
+
+                    st.markdown("**2️⃣ 🎯 Strategy Selection**")
+                    st.caption("Choosing optimal RAG pipeline...")
+                    time.sleep(0.3)
+
+                    # Call non-streaming API
                     response = requests.post(
-                        f"{BACKEND_URL}/api/rag/ask",
+                        f"{BACKEND_URL}/api/rag/{endpoint_override or 'ask-smart'}",
                         json=payload,
-                        timeout=30
+                        timeout=180
                     )
+                elif rag_strategy == "graph":
+                    # Display Graph RAG techniques
+                    for idx, (tech_name, tech_detail) in enumerate(techniques, 1):
+                        st.markdown(f"**{idx}️⃣ {tech_name}**")
+                        st.caption(tech_detail)
+                        time.sleep(0.3)
 
-                    if response.status_code == 200:
+                    # Call Graph RAG API
+                    response = requests.post(
+                        f"{BACKEND_URL}/api/rag/{endpoint}",
+                        json=payload,
+                        timeout=180
+                    )
+                elif rag_strategy == "table":
+                    # Display Table RAG techniques
+                    for idx, (tech_name, tech_detail) in enumerate(techniques, 1):
+                        st.markdown(f"**{idx}️⃣ {tech_name}**")
+                        st.caption(tech_detail)
+                        time.sleep(0.3)
+
+                    # Call Table RAG API
+                    response = requests.post(
+                        f"{BACKEND_URL}/api/rag/{endpoint}",
+                        json=payload,
+                        timeout=180
+                    )
+                else:
+                    # Announce chosen strategy (including multi-collection hint)
+                    strategy_label = rag_strategy.title()
+                    if endpoint_override == "search-multi-collection":
+                        strategy_label += " (multi-collection)"
+                    st.markdown(f"**📌 Strategy:** {strategy_label}")
+                    time.sleep(0.2)
+
+                    # For non-smart/non-graph modes, display techniques sequentially BEFORE API call
+                    for idx, (tech_name, tech_detail) in enumerate(techniques, 1):
+                        st.markdown(f"**{idx}️⃣ {tech_name}**")
+                        st.caption(tech_detail)
+                        time.sleep(0.3)
+
+                    # Use streaming endpoint for real-time response unless multi-collection is requested
+                    target_endpoint = endpoint_override or "ask-stream"
+                    if target_endpoint == "search-multi-collection":
+                        response = requests.post(
+                            f"{BACKEND_URL}/api/rag/{target_endpoint}",
+                            json=payload,
+                            timeout=180
+                        )
+                        used_streaming = False
+                    else:
+                        response = requests.post(
+                            f"{BACKEND_URL}/api/rag/ask-stream",
+                            json=payload,
+                            stream=True,
+                            timeout=180
+                        )
+                        used_streaming = True
+
+                if response.status_code == 200:
+                    import json as json_module
+
+                    # Handle non-streaming responses (Smart RAG, Graph RAG, Table RAG)
+                    if rag_strategy in ["smart", "graph", "table"] or not used_streaming:
                         result = response.json()
 
-                        # Check if query was slow and auto-switch to fallback
-                        total_ms = result.get("total_time_ms", result.get("timings", {}).get("end_to_end_ms", 0.0))
-                        current_reranker = st.session_state.get("rag_reranker_choice", "primary")
+                        # Display selected strategy with reason
+                        selected_strategy = result.get("selected_strategy", "Hybrid RAG")
+                        strategy_reason = result.get("strategy_reason", "")
+                        cache_hit = result.get("cache_hit", False)
 
-                        # Auto-switch to fallback if primary took > 300ms and not already on fallback
-                        if total_ms > 300 and current_reranker == "primary" and "fallback" in reranker_options:
-                            st.session_state.rag_reranker_choice = "fallback"
-                            st.session_state.rag_last_reranker = "fallback"
-                            st.warning(f"⚡ Query took {total_ms:.1f}ms (>300ms). Auto-switched to Fallback (MiniLM) for faster responses.")
+                        # Display cache status prominently
+                        if cache_hit:
+                            st.success("💾 **Cache HIT** - Answer retrieved from cache (0 tokens used)")
+                        else:
+                            st.info("🔍 **Cache MISS** - Generating fresh answer")
 
-                            # Warm up fallback with 15 queries from eval data
-                            with st.spinner("🔥 Warming up Fallback reranker (15 queries)..."):
-                                try:
-                                    # Load real eval questions for warm-up
-                                    warmup_questions = load_warmup_questions()
+                        st.info(f"✅ Selected: **{selected_strategy}**")
+                        if strategy_reason:
+                            st.caption(f"💡 Reason: {strategy_reason}")
+                        time.sleep(0.3)
 
-                                    for i, question in enumerate(warmup_questions, 1):
-                                        warmup_response = requests.post(
-                                            f"{BACKEND_URL}/api/rag/ask",
-                                            json={
-                                                "question": question,
-                                                "top_k": 3,
-                                                "include_timings": True,  # Use same code path as real queries
-                                                "reranker": "fallback",
-                                                "vector_limit": 5,
-                                                "content_char_limit": 300
-                                            },
-                                            timeout=30
-                                        )
-                                    st.success("✅ Fallback reranker ready!")
-                                except Exception as e:
-                                    st.warning(f"⚠️ Fallback warm-up failed: {e}")
+                        # Display technique steps based on selected strategy (including multi-collection labels)
+                        def _render_steps(strategy_key: str, start_index: int = 3) -> None:
+                            step_list = strategy_config.get(strategy_key, {}).get("techniques", [])
+                            for idx, (tech_name, tech_detail) in enumerate(step_list, start=start_index):
+                                st.markdown(f"**{idx}️⃣ {tech_name}**")
+                                st.caption(tech_detail)
+                                time.sleep(0.3)
+
+                        strategy_lower = (selected_strategy or "").lower()
+                        # Map multi-collection labels back to core strategy keys
+                        render_key = "hybrid"
+                        if "graph" in strategy_lower:
+                            render_key = "graph"
+                        elif "table" in strategy_lower:
+                            render_key = "table"
+                        elif "iterative" in strategy_lower:
+                            render_key = "iterative"
+                        elif "standard" in strategy_lower:
+                            render_key = "standard"
+                        elif "hybrid" in strategy_lower:
+                            render_key = "hybrid"
+
+                        label_map = {
+                            "hybrid": "Hybrid search",
+                            "iterative": "Iterative Self-RAG",
+                            "graph": "Graph RAG",
+                            "table": "Table RAG",
+                            "standard": "Standard RAG",
+                        }
+                        st.markdown(f"**RAG strategy:** {label_map.get(render_key, render_key.title())}")
+                        _render_steps(render_key)
 
                         # Display answer
-                        answer = result.get("answer", "")
-                        st.markdown(f"**Answer:**\n\n{answer}")
-
-                        # Display metrics
                         st.markdown("---")
-                        col1, col2, col3 = st.columns(3)
-                        col1.metric("Retrieval Time", f"{result.get('retrieval_time_ms', 0):.1f}ms")
-                        col2.metric("Confidence", f"{result.get('confidence', 0):.3f}")
-                        col3.metric("Chunks", result.get('num_chunks_retrieved', 0))
+                        st.markdown("### 💬 Answer")
 
-                        timings = result.get("timings") or {}
-                        models_info = result.get("models") or {}
-                        llm_ms = timings.get("llm_ms", result.get("llm_time_ms", 0.0))
-                        token_usage = result.get("token_usage") or {}
-                        token_cost_usd = float(result.get("token_cost_usd") or 0.0)
-                        prompt_tokens = int(token_usage.get("prompt", 0) or 0)
-                        completion_tokens = int(token_usage.get("completion", 0) or 0)
-                        total_tokens = int(token_usage.get("total", prompt_tokens + completion_tokens) or 0)
+                        # 🆕 Display cache indicator if answer is from cache
+                        is_cached = result.get("cache_hit", False)
+                        if is_cached:
+                            st.caption("⚡ Answer from cache - If inaccurate, click 'Bad' to clear cache")
 
+                        answer = result.get("answer", "")
+                        st.markdown(answer)
+
+                        # 🆕 User Feedback Buttons (for Smart RAG)
+                        query_id = result.get("query_id")
+                        if query_id:
+                            backend_url = st.session_state.get("backend_url", "http://backend:8000")
+                            session_key = f"smart_rag_{query_id}"
+                            render_feedback_buttons(query_id, session_key, backend_url)
+
+                        # Display metrics for Smart RAG
+                        st.markdown("---")
+                        st.markdown("### 📊 Performance Metrics")
+
+                        # Get token usage from result
+                        token_usage = result.get('token_usage', {})
+                        # If answer cache hit, force tokens to 0 for display
+                        cache_hit = result.get('cache_hit') or False
+                        token_breakdown = result.get('token_breakdown') or {}
+                        cache_stage = token_breakdown.get('answer_cache_lookup', {}) if isinstance(token_breakdown, dict) else {}
+                        cache_hit = cache_hit or cache_stage.get('cache_hit', False)
+                        total_tokens = 0 if cache_hit else (token_usage.get('total', 0) if token_usage else 0)
+
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("⚡ Total Time", f"{result.get('total_time_ms', 0):.0f}ms")
+                        with col2:
+                            st.metric("📄 Chunks", result.get('num_chunks_retrieved', 0))
+                        with col3:
+                            st.metric("🎯 Confidence", f"{result.get('confidence', 0):.3f}")
+                        with col4:
+                            st.metric("🪙 Tokens", total_tokens if total_tokens > 0 else "N/A")
+
+                        # Token breakdown - detailed pipeline view
+                        token_breakdown = token_breakdown or result.get('token_breakdown')
+                        if token_breakdown:
+                            with st.expander("🔍 Token Usage Breakdown (full details)", expanded=False):
+                                st.markdown("### Pipeline Stages")
+
+                                # Query Classification
+                                qc = token_breakdown.get('query_classification', {})
+                                st.markdown(f"""
+                                **1️⃣ Query Classification**
+                                - Tokens: `{qc.get('tokens', 0)}`
+                                - Method: `{qc.get('method', 'N/A')}`
+                                - LLM Used: `{'✅ Yes' if qc.get('llm_used') else '❌ No'}`
+                                """)
+
+                                # Cache Lookup
+                                cache = token_breakdown.get('answer_cache_lookup', {})
+                                cache_status = "✅ HIT" if cache.get('cache_hit') else "❌ MISS"
+                                st.markdown(f"""
+                                **2️⃣ Answer Cache Lookup**
+                                - Tokens: `{cache.get('tokens', 0)}`
+                                - Status: `{cache_status}`
+                                - LLM Used: `{'✅ Yes' if cache.get('llm_used') else '❌ No'}`
+                                """)
+
+                                # Answer Generation
+                                gen = token_breakdown.get('answer_generation', {})
+                                st.markdown(f"""
+                                **3️⃣ Answer Generation**
+                                - Prompt Tokens: `{gen.get('prompt_tokens', 0)}`
+                                - Completion Tokens: `{gen.get('completion_tokens', 0)}`
+                                - Total: `{gen.get('tokens', 0)}`
+                                - Cost: `${gen.get('cost', 0):.5f}`
+                                - LLM Used: `{'✅ Yes' if gen.get('llm_used') else '❌ No'}`
+                                """)
+
+                                # Iteration details if available
+                                iterations = gen.get('iterations')
+                                if iterations and len(iterations) > 1:
+                                    st.markdown("**📊 Iteration Details:**")
+                                    for it in iterations:
+                                        it_tokens = it.get('token_usage')
+                                        if it_tokens:
+                                            st.caption(f"   Iteration {it['iteration']}: {it_tokens['total']} tokens (${it_tokens['cost']:.5f}) | Confidence: {it['confidence']:.2f}")
+                                        else:
+                                            st.caption(f"   Iteration {it['iteration']}: N/A | Confidence: {it['confidence']:.2f}")
+
+                                # Total
+                                total = token_breakdown.get('total', {})
+                                st.markdown("---")
+                                st.markdown(f"""
+                                **💰 Total**
+                                - Total Tokens: `{total.get('tokens', 0)}`
+                                - Total Cost: `${total.get('cost', 0):.5f}`
+                                - LLM Calls: `{total.get('llm_calls', 0)}`
+                                """)
+                        elif token_usage and total_tokens > 0:
+                            # Fallback to simple token details if no breakdown
+                            with st.expander("💰 Token Usage Details"):
+                                token_cols = st.columns(3)
+                                token_cols[0].metric("Prompt", token_usage.get('prompt', 0))
+                                token_cols[1].metric("Completion", token_usage.get('completion', 0))
+                                token_cols[2].metric("Total", total_tokens)
+                                if result.get('token_cost_usd'):
+                                    st.caption(f"💵 Estimated cost: ${result.get('token_cost_usd', 0):.5f}")
+
+                        # Display AI Governance Status
+                        governance_context = result.get('governance_context')
+                        if governance_context:
+                            st.markdown("---")
+                            display_governance_status(governance_context)
+
+                        # Display Graph Context if Graph RAG was selected
+                        if selected_strategy == "Graph RAG":
+                            timings = result.get('timings', {})
+                            graph_context = timings.get('graph_context')
+                            if graph_context:
+                                st.markdown("---")
+                                st.markdown("### 🕸️ Knowledge Graph")
+
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.metric("📍 Entities", graph_context.get("num_entities", 0))
+                                with col2:
+                                    st.metric("🔗 Relationships", graph_context.get("num_relationships", 0))
+
+                                # Display entities grouped by type
+                                entities = graph_context.get("entities", [])
+                                if entities:
+                                    with st.expander("📍 Entities (by type)", expanded=False):
+                                        # Group entities by type
+                                        from collections import defaultdict
+                                        entities_by_type = defaultdict(list)
+                                        for ent in entities[:30]:  # Show top 30
+                                            ent_type = ent.get("type", "unknown")
+                                            entities_by_type[ent_type].append(ent.get("name", ""))
+
+                                        for ent_type, names in entities_by_type.items():
+                                            st.markdown(f"**{ent_type.capitalize()}**: {', '.join(names[:15])}")
+
+                                # Display relationships
+                                relationships = graph_context.get("relationships", [])
+                                if relationships:
+                                    with st.expander("🔗 Key Relationships", expanded=False):
+                                        for rel in relationships[:20]:  # Show top 20
+                                            source = rel.get("source", "")
+                                            target = rel.get("target", "")
+                                            relation = rel.get("relation", "")
+                                            conf = rel.get("confidence", 0)
+                                            st.markdown(f"**{source}** → *{relation}* → **{target}** (conf: {conf:.2f})")
+
+                                # ✨ Interactive Network Visualization with Plotly (show nodes even if no edges)
+                                if entities:
+                                    with st.expander("🌐 Interactive Graph Visualization", expanded=True):
+                                        import plotly.graph_objects as go
+                                        import networkx as nx
+
+                                        G = nx.DiGraph()
+                                        for ent in entities[:50]:
+                                            G.add_node(ent['name'], type=ent.get('type', 'unknown'))
+                                        for rel in relationships[:100]:
+                                            source = rel.get('source', '')
+                                            target = rel.get('target', '')
+                                            if source in G.nodes and target in G.nodes:
+                                                G.add_edge(source, target, relation=rel.get('relation', ''))
+
+                                        pos = nx.spring_layout(G, k=0.5, iterations=50) if len(G.nodes) > 0 else {}
+
+                                        edge_x, edge_y, edge_text = [], [], []
+                                        for edge in G.edges():
+                                            x0, y0 = pos[edge[0]]
+                                            x1, y1 = pos[edge[1]]
+                                            edge_x.extend([x0, x1, None])
+                                            edge_y.extend([y0, y1, None])
+                                            relation = G.edges[edge].get('relation', '')
+                                            edge_text.append(f"{edge[0]} → {relation} → {edge[1]}")
+
+                                        edge_trace = go.Scatter(
+                                            x=edge_x, y=edge_y,
+                                            line=dict(width=0.5, color='#888'),
+                                            hoverinfo='text',
+                                            text=edge_text if edge_text else None,
+                                            mode='lines')
+
+                                        node_x, node_y, node_text, node_color = [], [], [], []
+                                        color_map = {
+                                            'person': '#FF6B6B',
+                                            'character': '#FF6B6B',
+                                            'role': '#FF8C42',
+                                            'place': '#4ECDC4',
+                                            'concept': '#95E1D3',
+                                            'skill': '#FFA07A',
+                                            'tool': '#DDA15E',
+                                            'event': '#BC6C25',
+                                            'unknown': '#CCCCCC'
+                                        }
+
+                                        for node in G.nodes():
+                                            x, y = pos.get(node, (0, 0))
+                                            node_x.append(x)
+                                            node_y.append(y)
+                                            node_type = G.nodes[node].get('type', 'unknown')
+                                            node_text.append(f"{node}<br>Type: {node_type}")
+                                            node_color.append(color_map.get(node_type, '#CCCCCC'))
+
+                                        node_trace = go.Scatter(
+                                            x=node_x, y=node_y,
+                                            mode='markers+text',
+                                            hoverinfo='text',
+                                            text=[n for n in G.nodes()],
+                                            hovertext=node_text,
+                                            textposition="top center",
+                                            textfont=dict(size=8),
+                                            marker=dict(
+                                                showscale=False,
+                                                color=node_color,
+                                                size=15,
+                                                line_width=2))
+
+                                        fig = go.Figure(data=[edge_trace, node_trace],
+                                            layout=go.Layout(
+                                                title=dict(text='Knowledge Graph Network', x=0.5, xanchor='center'),
+                                                titlefont_size=16,
+                                                showlegend=False,
+                                                hovermode='closest',
+                                                margin=dict(b=0,l=0,r=0,t=40),
+                                                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                                height=600
+                                            ))
+
+                                        st.plotly_chart(fig, use_container_width=True)
+                                        st.caption("🎨 **Entity Types**: " + " | ".join([f"{k}: {v}" for k, v in color_map.items() if k != 'unknown']))
+
+                                # 📥 Export Functionality
+                                if entities or relationships:
+                                    st.markdown("---")
+                                    st.markdown("### 📥 Export Knowledge Graph")
+
+                                    col1, col2, col3 = st.columns(3)
+
+                                    with col1:
+                                        # Export as JSON
+                                        import json
+                                        graph_data = {
+                                            "entities": entities,
+                                            "relationships": relationships,
+                                            "metadata": {
+                                                "num_entities": graph_context.get("num_entities", 0),
+                                                "num_relationships": graph_context.get("num_relationships", 0),
+                                                "query": prompt,
+                                                "timestamp": str(pd.Timestamp.now())
+                                            }
+                                        }
+                                        json_str = json.dumps(graph_data, indent=2, ensure_ascii=False)
+                                        st.download_button(
+                                            label="📄 Download JSON",
+                                            data=json_str,
+                                            file_name="knowledge_graph.json",
+                                            mime="application/json"
+                                        )
+
+                                    with col2:
+                                        # Export as CSV (relationships)
+                                        import pandas as pd
+                                        if relationships:
+                                            df_rels = pd.DataFrame(relationships)
+                                            csv_str = df_rels.to_csv(index=False)
+                                            st.download_button(
+                                                label="📊 Download CSV",
+                                                data=csv_str,
+                                                file_name="relationships.csv",
+                                                mime="text/csv"
+                                            )
+
+                                    with col3:
+                                        # Export as GraphML (for Gephi, Cytoscape, etc.)
+                                        if entities and relationships:
+                                            import networkx as nx
+                                            G_export = nx.DiGraph()
+
+                                            # Add nodes with attributes
+                                            for ent in entities:
+                                                G_export.add_node(ent['name'],
+                                                                type=ent.get('type', 'unknown'),
+                                                                sources=ent.get('num_sources', 0))
+
+                                            # Add edges with attributes
+                                            for rel in relationships:
+                                                G_export.add_edge(rel['source'], rel['target'],
+                                                                relation=rel.get('relation', ''),
+                                                                confidence=rel.get('confidence', 0))
+
+                                            # Convert to GraphML
+                                            from io import BytesIO
+                                            graphml_buffer = BytesIO()
+                                            nx.write_graphml(G_export, graphml_buffer)
+                                            graphml_str = graphml_buffer.getvalue()
+
+                                            st.download_button(
+                                                label="🕸️ Download GraphML",
+                                                data=graphml_str,
+                                                file_name="knowledge_graph.graphml",
+                                                mime="application/xml"
+                                            )
+
+                            # Display JIT Building Stats
+                            jit_stats = timings.get('jit_stats')
+                            if jit_stats:
+                                st.markdown("---")
+                                st.markdown("### 🔨 JIT Graph Building Stats")
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("➕ Entities Added", jit_stats.get("entities_added", 0))
+                                with col2:
+                                    st.metric("➕ Relationships Added", jit_stats.get("relationships_added", 0))
+                                with col3:
+                                    st.metric("📄 Chunks Processed", jit_stats.get("chunks_processed", 0))
+
+                                cache_hit = timings.get('cache_hit', False)
+                                if cache_hit:
+                                    st.success("✅ Cache Hit: Used existing graph data")
+                                else:
+                                    st.info("🔨 Built new graph segments for this query")
+
+                        # Auto-scroll to bottom
+                        st.markdown(
+                            """
+                            <script>
+                            (function() {
+                                var containers = [
+                                    window.parent.document.querySelector('section.main'),
+                                    window.parent.document.querySelector('[data-testid="stAppViewContainer"]')
+                                ];
+                                containers.forEach(function(c) {
+                                    if (c) c.scrollTop = c.scrollHeight;
+                                });
+                            })();
+                            </script>
+                            """,
+                            unsafe_allow_html=True
+                        )
+
+                        # Continue to show completion and metrics (skip streaming loop)
+                    elif rag_strategy == "graph":
+                        # Handle Graph RAG non-streaming response
+                        result = response.json()
+
+                        # Display answer
+                        st.markdown("---")
+                        st.markdown("### 💬 Answer")
+                        answer = result.get("answer", "")
+                        st.markdown(answer)
+
+                        # Display Graph Context
+                        graph_context = result.get("graph_context", {}) or result.get("timings", {}).get("graph_context", {})
+                        if graph_context:
+                            st.markdown("---")
+                            st.markdown("### 🕸️ Knowledge Graph")
+
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("📍 Entities", graph_context.get("num_entities", 0))
+                            with col2:
+                                st.metric("🔗 Relationships", graph_context.get("num_relationships", 0))
+
+                            # Display entities grouped by type
+                            entities = graph_context.get("entities", [])
+                            if entities:
+                                with st.expander("📍 Entities (by type)", expanded=False):
+                                    # Group entities by type
+                                    from collections import defaultdict
+                                    entities_by_type = defaultdict(list)
+                                    for ent in entities[:20]:  # Show top 20
+                                        ent_type = ent.get("type", "unknown")
+                                        entities_by_type[ent_type].append(ent.get("name", ""))
+
+                                    for ent_type, names in entities_by_type.items():
+                                        st.markdown(f"**{ent_type.capitalize()}**: {', '.join(names[:10])}")
+
+                            # Display relationships
+                            relationships = graph_context.get("relationships", [])
+                            if relationships:
+                                with st.expander("🔗 Key Relationships", expanded=True):
+                                    for rel in relationships[:15]:  # Show top 15
+                                        source = rel.get("source", "")
+                                        target = rel.get("target", "")
+                                        relation = rel.get("relation", "related_to")
+                                        confidence = rel.get("confidence", 1.0)
+                                        st.caption(f"**{source}** → *{relation}* → **{target}** (conf: {confidence:.2f})")
+
+                            # Plotly graph (show nodes even if no edges)
+                            if entities:
+                                with st.expander("🌐 Interactive Graph Visualization", expanded=True):
+                                    import plotly.graph_objects as go
+                                    import networkx as nx
+
+                                    G = nx.DiGraph()
+                                    for ent in entities[:50]:
+                                        G.add_node(ent['name'], type=ent.get('type', 'unknown'))
+                                    for rel in relationships[:100]:
+                                        s = rel.get('source', '')
+                                        t = rel.get('target', '')
+                                        if s in G.nodes and t in G.nodes:
+                                            G.add_edge(s, t, relation=rel.get('relation', ''))
+
+                                    pos = nx.spring_layout(G, k=0.5, iterations=50) if len(G.nodes) > 0 else {}
+
+                                    edge_x, edge_y, edge_text = [], [], []
+                                    for edge in G.edges():
+                                        x0, y0 = pos[edge[0]]
+                                        x1, y1 = pos[edge[1]]
+                                        edge_x.extend([x0, x1, None])
+                                        edge_y.extend([y0, y1, None])
+                                        relation = G.edges[edge].get('relation', '')
+                                        edge_text.append(f"{edge[0]} → {relation} → {edge[1]}")
+
+                                    edge_trace = go.Scatter(
+                                        x=edge_x, y=edge_y,
+                                        line=dict(width=0.5, color='#888'),
+                                        hoverinfo='text',
+                                        text=edge_text if edge_text else None,
+                                        mode='lines')
+
+                                    node_x, node_y, node_text, node_color = [], [], [], []
+                                    color_map = {
+                                        'person': '#FF6B6B',
+                                        'character': '#FF6B6B',
+                                        'role': '#FF8C42',
+                                        'place': '#4ECDC4',
+                                        'concept': '#95E1D3',
+                                        'skill': '#FFA07A',
+                                        'tool': '#DDA15E',
+                                        'event': '#BC6C25',
+                                        'unknown': '#CCCCCC'
+                                    }
+
+                                    for node in G.nodes():
+                                        x, y = pos.get(node, (0, 0))
+                                        node_x.append(x)
+                                        node_y.append(y)
+                                        node_type = G.nodes[node].get('type', 'unknown')
+                                        node_text.append(f"{node}<br>Type: {node_type}")
+                                        node_color.append(color_map.get(node_type, '#CCCCCC'))
+
+                                    node_trace = go.Scatter(
+                                        x=node_x, y=node_y,
+                                        mode='markers+text',
+                                        hoverinfo='text',
+                                        text=[n for n in G.nodes()],
+                                        hovertext=node_text,
+                                        textposition="top center",
+                                        textfont=dict(size=8),
+                                        marker=dict(
+                                            showscale=False,
+                                            color=node_color,
+                                            size=15,
+                                            line_width=2))
+
+                                    fig = go.Figure(data=[edge_trace, node_trace],
+                                        layout=go.Layout(
+                                            title=dict(text='Knowledge Graph Network', x=0.5, xanchor='center'),
+                                            titlefont_size=16,
+                                            showlegend=False,
+                                            hovermode='closest',
+                                            margin=dict(b=0,l=0,r=0,t=40),
+                                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                            height=600
+                                        ))
+
+                                    st.plotly_chart(fig, use_container_width=True)
+                                    st.caption("🎨 **Entity Types**: " + " | ".join([f"{k}: {v}" for k, v in color_map.items() if k != 'unknown']))
+
+                        # Display JIT building stats
+                        jit_stats = result.get("jit_stats", {})
+                        if jit_stats:
+                            st.markdown("---")
+                            st.markdown("### 🔨 JIT Graph Building")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("➕ Entities Added", jit_stats.get("entities_added", 0))
+                            with col2:
+                                st.metric("➕ Relationships Added", jit_stats.get("relationships_added", 0))
+                            with col3:
+                                st.metric("📄 Chunks Processed", jit_stats.get("chunks_processed", 0))
+
+                            cache_hit = result.get("cache_hit", False)
+                            if cache_hit:
+                                st.success("✅ Cache Hit - Used existing graph data!")
+                            else:
+                                st.info("🔨 Built new graph segments on-demand")
+
+                        # Display timing metrics
+                        timings = result.get("timings", {})
                         if timings:
-                            st.markdown("**Latency Breakdown**")
-                            breakdown_cols = st.columns(5)
-                            breakdown_cols[0].metric("Embed", f"{timings.get('embed_ms', 0.0):.1f}ms")
-                            breakdown_cols[1].metric("Vector", f"{timings.get('vector_ms', 0.0):.1f}ms")
-                            breakdown_cols[2].metric("Rerank", f"{timings.get('rerank_ms', 0.0):.1f}ms")
-                            breakdown_cols[3].metric("LLM", f"{llm_ms:.1f}ms")
-                            breakdown_cols[4].metric("Total", f"{total_ms:.1f}ms")
-
-                        if token_usage or token_cost_usd:
-                            st.markdown("**Token Usage & Cost**")
-                            token_cols = st.columns(4)
-                            token_cols[0].metric("Prompt Tokens", prompt_tokens)
-                            token_cols[1].metric("Completion Tokens", completion_tokens)
-                            token_cols[2].metric("Total Tokens", total_tokens)
-                            token_cols[3].metric("Token Cost (USD)", f"${token_cost_usd:.4f}")
-
-                        vector_used = result.get("vector_limit_used") or timings.get("vector_limit_used")
-                        content_used = result.get("content_char_limit_used") or timings.get("content_char_limit_used")
-                        reranker_mode = result.get("reranker_mode") or timings.get("reranker_mode")
-                        capsule = []
-                        if vector_used is not None:
-                            capsule.append(f"vector limit {vector_used}")
-                        if content_used:
-                            capsule.append(f"content limit {content_used}")
-                        else:
-                            capsule.append("full content")
-                        if reranker_mode:
-                            capsule.append(f"reranker mode {reranker_mode}")
-                        st.caption(" | ".join(capsule))
-
-                        if models_info:
-                            st.markdown("**Models Used**")
-                            st.markdown(
-                                f"- Embedding: `{format_model_label(models_info.get('embedding'))}`\n"
-                                f"- Reranker: `{format_model_label(models_info.get('reranker'))}`\n"
-                                f"- LLM: `{models_info.get('llm', '—')}`"
-                            )
-
-                        # Update RAG stats
-                        retrieval_ms = result.get('retrieval_time_ms', 0.0)
-                        rerank_ms = timings.get('rerank_ms', 0.0)
-                        confidence = result.get('confidence', 0.0)
-                        current_reranker_choice = st.session_state.get("rag_reranker_choice", "primary")
-
-                        st.session_state.rag_stats["total_queries"] += 1
-                        st.session_state.rag_stats["total_retrieval_ms"] += retrieval_ms
-                        st.session_state.rag_stats["total_rerank_ms"] += rerank_ms
-                        st.session_state.rag_stats["total_llm_ms"] += llm_ms
-                        st.session_state.rag_stats["total_tokens"] += total_tokens
-                        st.session_state.rag_stats["total_cost_usd"] += token_cost_usd
-
-                        # Update average confidence
-                        old_avg = st.session_state.rag_stats["avg_confidence"]
-                        n = st.session_state.rag_stats["total_queries"]
-                        st.session_state.rag_stats["avg_confidence"] = ((old_avg * (n - 1)) + confidence) / n
-
-                        # Track reranker usage
-                        if current_reranker_choice == "primary":
-                            st.session_state.rag_stats["primary_reranker_count"] += 1
-                        elif current_reranker_choice == "fallback":
-                            st.session_state.rag_stats["fallback_reranker_count"] += 1
-
-                        # Display citation sources
-                        citations = result.get("citations", [])
-                        if citations:
-                            with st.expander("📎 View Sources"):
-                                for i, citation in enumerate(citations, 1):
-                                    st.markdown(f"**[{i}] {citation.get('source', 'Unknown')}**")
-                                    st.markdown(f"- Score: {citation.get('score', 0):.3f}")
-                                    content = citation.get('content', '')
-                                    snippet = content[:200] + "..." if len(content) > 200 else content
-                                    st.markdown(f"- Content: {snippet}")
-                                    st.markdown("")
-
-                        # Ask if continue
-                        st.markdown("\n**Continue asking questions or type 'q'(quit) to exit RAG mode.**")
-
-                        # Collect RAG metrics
-                        st.session_state.rag_metrics["retrieval_times"].append(result.get('retrieval_time_ms', 0))
-                        st.session_state.rag_metrics["confidences"].append(result.get('confidence', 0))
-
-                        # Save to message history and display immediately
-                        metrics_parts = [
-                            f"Retrieval: {result.get('retrieval_time_ms', 0):.1f}ms",
-                            f"Embed: {timings.get('embed_ms', 0.0):.1f}ms",
-                            f"Vector: {timings.get('vector_ms', 0.0):.1f}ms",
-                            f"Rerank: {timings.get('rerank_ms', 0.0):.1f}ms",
-                            f"LLM: {llm_ms:.1f}ms",
-                        ]
-                        if prompt_tokens or completion_tokens:
-                            metrics_parts.append(f"Tokens: {total_tokens}")
-                        if token_cost_usd:
-                            metrics_parts.append(f"Token Cost: ${token_cost_usd:.4f}")
-                        metrics_summary = " | ".join(metrics_parts)
-                        model_summary = (
-                            f"Embedding: {format_model_label(models_info.get('embedding'))}, "
-                            f"Reranker: {format_model_label(models_info.get('reranker'))}, "
-                            f"LLM: {models_info.get('llm', '—')}"
-                        )
-
-                        full_response = (
-                            f"**Answer:**\n\n{answer}\n\n---\n\n"
-                            f"**Metrics:** {metrics_summary} | Confidence: {result.get('confidence', 0):.3f} "
-                            f"| Chunks: {result.get('num_chunks_retrieved', 0)}\n"
-                            f"**Models:** {model_summary}\n\n"
-                            "**Continue asking questions or type 'q'(quit) to exit RAG mode.**"
-                        )
-                        append_chat_history("assistant", full_response)
-
-                        stored_token_usage = None
-                        if token_usage or prompt_tokens or completion_tokens:
-                            stored_token_usage = {
-                                "prompt": prompt_tokens,
-                                "completion": completion_tokens,
-                                "total": total_tokens,
-                            }
-
-                        st.session_state.metrics_history["timestamps"].append(datetime.now())
-                        st.session_state.metrics_history["latencies"].append(total_ms)
-                        st.session_state.metrics_history["prompt_tokens"].append(prompt_tokens)
-                        st.session_state.metrics_history["completion_tokens"].append(completion_tokens)
-                        st.session_state.metrics_history["costs"].append(token_cost_usd)
-                        st.session_state.metrics_history["services"].append("rag")
-
-                        st.session_state.rag_last_summary = {
-                            "timings": {
-                                "embed_ms": timings.get("embed_ms", 0.0),
-                                "vector_ms": timings.get("vector_ms", 0.0),
-                                "rerank_ms": timings.get("rerank_ms", 0.0),
-                                "llm_ms": llm_ms,
-                                "end_to_end_ms": total_ms,
-                            },
-                            "models": models_info,
-                            "vector_limit": vector_used,
-                            "content_limit": content_used,
-                            "reranker_mode": reranker_mode,
-                            "token_usage": stored_token_usage,
-                            "token_cost_usd": token_cost_usd,
-                        }
+                            st.markdown("---")
+                            st.markdown("### ⚡ Performance Metrics")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Total", f"{timings.get('total_ms', 0):.0f}ms")
+                            with col2:
+                                st.metric("JIT Build", f"{timings.get('jit_build_ms', 0):.0f}ms")
+                            with col3:
+                                st.metric("Entity Extraction", f"{timings.get('entity_extraction_ms', 0):.0f}ms")
+                            with col4:
+                                st.metric("Graph Query", f"{timings.get('graph_query_ms', 0):.0f}ms")
 
                     else:
-                        error_msg = f"❌ Error: {response.status_code}"
-                        st.error(error_msg)
-                        append_chat_history("assistant", error_msg)
+                        if not used_streaming:
+                            # Non-streaming flow (multi-collection)
+                            result = response.json()
+                            full_answer = result.get("answer", "")
 
-                except Exception as e:
-                    error_msg = f"❌ Request failed: {e}"
+                            if rag_strategy == "table":
+                                excel_step = "4️⃣ Excel analysis (reverse energy tool)" if "Excel Analysis" in full_answer else "4️⃣ Excel analysis (skipped/no excel match)"
+                                st.markdown("### 🧭 Table RAG Pipeline")
+                                st.markdown(
+                                    "\n".join([
+                                        "- 1️⃣ Query intent extraction (entities/attributes)",
+                                        "- 2️⃣ Hybrid retrieval (vector + BM25)",
+                                        "- 3️⃣ Table structuring from context",
+                                        f"- {excel_step}",
+                                        "- 5️⃣ Answer generation with table + tool context",
+                                    ])
+                                )
+
+                            st.markdown("---")
+                            st.markdown("### 💬 Answer")
+                            st.markdown(full_answer)
+
+                            # Table RAG metrics and tool usage
+                            if rag_strategy == "table":
+                                timings = result.get("timings", {}) or {}
+                                models_info = result.get("models", {}) or {}
+                                token_usage = result.get("token_usage", {}) or {}
+                                tool_info = result.get("tool_usage") or result.get("tool") or {}
+
+                                st.markdown("---")
+                                st.markdown("### ⚡ Performance Metrics (Table RAG)")
+                                colm1, colm2, colm3, colm4 = st.columns(4)
+                                colm1.metric("Retrieval", f"{timings.get('retrieval_ms', 0):.1f}ms")
+                                colm2.metric("Structuring", f"{timings.get('structuring_ms', 0):.1f}ms")
+                                colm3.metric("Answer Gen", f"{timings.get('answer_generation_ms', 0):.1f}ms")
+                                colm4.metric("Total", f"{timings.get('total_ms', 0):.1f}ms")
+
+                                st.markdown("### 🤖 Models Used")
+                                st.markdown(
+                                    f"- Embedding: `{models_info.get('embedding', '—')}`\n"
+                                    f"- Reranker: `{models_info.get('reranker', '—')}`\n"
+                                    f"- LLM: `{models_info.get('llm', '—')}`"
+                                )
+
+                                st.markdown("### 🪙 Tokens")
+                                tc1, tc2, tc3 = st.columns(3)
+                                tc1.metric("Prompt", int(token_usage.get("prompt", 0) or 0))
+                                tc2.metric("Completion", int(token_usage.get("completion", 0) or 0))
+                                tc3.metric("Total", int(token_usage.get("total", 0) or 0))
+
+                                # Tool usage display
+                                if tool_info:
+                                    st.markdown("### 🛠️ Excel Tool")
+                                    triggered = tool_info.get("triggered") or tool_info.get("excel_triggered")
+                                    status = tool_info.get("status") or ("success" if tool_info.get("excel_success") else "failed")
+                                    reason = tool_info.get("reason")
+                                    st.caption(f"Triggered: {triggered}, Status: {status}, Time: {tool_info.get('execution_time_ms', 0):.1f}ms")
+                                    if reason:
+                                        st.caption(f"Reason: {reason}")
+                                    output = tool_info.get("output")
+                                    if not output:
+                                        output = result.get("excel_result")
+                                    if output:
+                                        st.markdown("**Excel reverse energy analysis:**")
+                                        st.caption(f"File: {output.get('uploaded_file')}")
+                                        st.metric("Total (kWh)", f"{output.get('reverse_energy_kwh', 0):.2f}")
+                                        rows = output.get("rows") or []
+                                        if rows:
+                                            with st.expander("Details by period", expanded=False):
+                                                for r in rows:
+                                                    st.markdown(f"- {r.get('label')}: start {r.get('start')}, end {r.get('end')}, delta {r.get('delta')}")
+                        else:
+                            # Process streaming response for non-smart modes
+                            full_answer = ""
+                            result = {}
+                            answer_placeholder = None  # Will be created after retrieval event
+
+                            for line in response.iter_lines():
+                                if not line:
+                                    continue
+
+                                line_str = line.decode('utf-8')
+
+                                # Parse SSE format
+                                if line_str.startswith('data:'):
+                                    # IMPORTANT: Only strip newlines, NOT spaces (for proper word spacing)
+                                    data_str = line_str[5:].strip('\r\n')
+
+                                    if data_str == '[DONE]':
+                                        break
+
+                                    # Backend sends " " (single space) tokens which represent \n
+                                    # when they appear as TWO consecutive spaces
+                                    if data_str == ' ':
+                                        # Single space token - check if previous token was also a space
+                                        if full_answer.endswith(' '):
+                                            # Two consecutive spaces = newline
+                                            full_answer = full_answer[:-1] + '\n'
+                                            if answer_placeholder:
+                                                answer_placeholder.markdown(full_answer + "▊")
+                                        else:
+                                            # First space, just add it
+                                            full_answer += ' '
+                                        continue
+
+                                    # Empty data lines (no content after "data:")
+                                    if not data_str:
+                                        continue
+
+                                    try:
+                                        data = json_module.loads(data_str)
+
+                                        # CRITICAL: Ensure data is a dict before using 'in' operator
+                                        if not isinstance(data, dict):
+                                            # Non-dict JSON data (int, string, etc.) - treat as content
+                                            # Convert back to string and add to answer
+                                            full_answer += str(data)
+                                            # Update display with typing effect
+                                            if answer_placeholder:
+                                                answer_placeholder.markdown(full_answer + "▊")
+                                            continue
+
+                                        # Handle retrieval event (metadata)
+                                        if 'citations' in data:
+                                            num_chunks = data.get('num_chunks', 0)
+                                            retrieval_ms = data.get('retrieval_time_ms', 0)
+                                            result['citations'] = data.get('citations', [])
+                                            result['num_chunks_retrieved'] = num_chunks
+                                            result['retrieval_time_ms'] = retrieval_ms
+                                            st.caption(f"📚 Retrieved {num_chunks} documents ({retrieval_ms:.0f}ms)")
+
+                                            # For Smart mode, display final LLM generation step
+                                            if answer_placeholder is None and rag_strategy == "smart":
+                                                st.markdown("**3️⃣ 🤖 LLM Answer Generation**")
+                                                st.caption("GPT-4o with Retrieved Context")
+
+                                            # Create answer section AFTER retrieval and technique display
+                                            if answer_placeholder is None:
+                                                st.markdown("---")
+                                                st.markdown("### 💬 Answer")
+                                                answer_placeholder = st.empty()
+
+                                        # Handle metadata event
+                                        elif 'usage' in data or 'cost' in data or 'total_time_ms' in data:
+                                            result['metadata'] = data
+                                            result['token_usage'] = data.get('usage', {})
+                                            result['token_cost_usd'] = data.get('cost', 0)
+                                            result['total_time_ms'] = data.get('total_time_ms', 0)
+                                            result['llm_time_ms'] = data.get('llm_time_ms', 0)
+                                            result['retrieval_time_ms'] = data.get('retrieval_time_ms', 0)
+
+                                            # Extract detailed timings if available
+                                            if 'timings' in data:
+                                                result['timings'] = data['timings']
+
+                                        # Handle error
+                                        elif 'error' in data:
+                                            st.error(f"❌ Error: {data['error']}")
+                                            result = None
+                                            break
+
+                                    except json_module.JSONDecodeError:
+                                        # This is a content chunk (plain text)
+                                        # If this is the first chunk, strip leading space (GPT tokenizer adds space at start)
+                                        if not full_answer and data_str.startswith(' '):
+                                            data_str = data_str[1:]  # Remove leading space from first chunk
+
+                                        full_answer += data_str
+                                        # Update display with typing effect
+                                        if answer_placeholder:
+                                            answer_placeholder.markdown(full_answer + "▊")
+
+                            # Display complete answer after streaming finishes
+                            if full_answer:
+                                # Clean up markdown formatting issues (spaces between ** markers)
+                                import re
+                                # Fix "** Reason ing :**" -> "**Reasoning:**"
+                                # Strategy: Remove ALL spaces between ** markers (for bold text)
+                                # This handles cases like "**Reason ing:**" where GPT tokenizer splits words
+                                # But KEEP newlines in the answer - don't replace them!
+                                cleaned_answer = re.sub(
+                                    r'\*\*([^*\n]+?)\*\*',  # Only match within single line (exclude \n)
+                                    lambda m: '**' + m.group(1).replace(' ', '') + '**',
+                                    full_answer
+                                )
+
+                                result['answer'] = cleaned_answer
+
+                                # Remove cursor after streaming completes
+                                if answer_placeholder:
+                                    answer_placeholder.markdown(cleaned_answer)
+
+                    # Show completion
+                    st.success("✅ All RAG Techniques Applied Successfully!")
+
+                    # Check if query was slow and auto-switch to fallback
+                    # Type-safe extraction of total_ms
+                    total_ms = result.get("total_time_ms", 0.0)
+                    if not total_ms or total_ms == 0.0:
+                        timings_data = result.get("timings", {})
+                        if isinstance(timings_data, dict):
+                            total_ms = timings_data.get("end_to_end_ms", 0.0)
+
+                    current_reranker = st.session_state.get("rag_reranker_choice", "primary")
+
+                    # Auto-switch to fallback if primary took > 300ms and not already on fallback
+                    if total_ms > 300 and current_reranker == "primary" and "fallback" in reranker_options:
+                        st.session_state.rag_reranker_choice = "fallback"
+                        st.session_state.rag_last_reranker = "fallback"
+                        st.warning(f"⚡ Query took {total_ms:.1f}ms (>300ms). Auto-switched to Fallback (MiniLM) for faster responses.")
+
+                        # Warm up fallback with 3 queries from eval data
+                        with st.spinner("🔥 Warming up Fallback reranker (3 queries)..."):
+                            try:
+                                # Load real eval questions for warm-up
+                                warmup_questions = load_warmup_questions()
+
+                                for i, question in enumerate(warmup_questions, 1):
+                                    warmup_response = requests.post(
+                                        f"{BACKEND_URL}/api/rag/ask",
+                                        json={
+                                            "question": question,
+                                            "top_k": 3,
+                                            "include_timings": True,  # Use same code path as real queries
+                                            "reranker": "fallback",
+                                            "vector_limit": 5,
+                                            "content_char_limit": 300
+                                        },
+                                        timeout=30
+                                    )
+                                st.success("✅ Fallback reranker ready!")
+                            except Exception as e:
+                                st.warning(f"⚠️ Fallback warm-up failed: {e}")
+
+                    # Answer already displayed during streaming (via answer_placeholder)
+                    # No need to display again here
+
+                    # Display metrics
+                    st.markdown("---")
+
+                    # Type-safe extraction with dict verification
+                    timings = result.get("timings") or {}
+                    if not isinstance(timings, dict):
+                        timings = {}
+
+                    models_info = result.get("models") or {}
+                    if not isinstance(models_info, dict):
+                        models_info = {}
+
+                    llm_ms = timings.get("llm_ms", result.get("llm_time_ms", 0.0))
+                    retrieval_ms = result.get('retrieval_time_ms', timings.get('total_ms', 0))
+
+                    # Main metrics row
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Retrieval Time", f"{retrieval_ms:.1f}ms")
+                    col2.metric("Confidence", f"{result.get('confidence', 0):.3f}")
+                    col3.metric("Chunks", result.get('num_chunks_retrieved', 0))
+
+                    # Always display detailed latency breakdown
+                    st.markdown("**📊 Detailed Latency Breakdown**")
+
+                    # Row 1: Embed, Vector, Candidate
+                    row1_cols = st.columns(3)
+                    embed_ms = timings.get('embed_ms') or timings.get('embedding_ms', 0.0)
+                    vector_ms = timings.get('vector_ms') or timings.get('vector_search_ms', 0.0)
+                    candidate_ms = timings.get('candidate_prep_ms') or timings.get('candidate_ms', 0.0)
+
+                    row1_cols[0].metric("⚡ Embed", f"{embed_ms:.1f}ms")
+                    row1_cols[1].metric("🔍 Vector", f"{vector_ms:.1f}ms")
+                    row1_cols[2].metric("📝 Candidate", f"{candidate_ms:.1f}ms")
+
+                    # Row 2: Rerank, LLM, Total
+                    row2_cols = st.columns(3)
+                    rerank_ms = timings.get('rerank_ms') or timings.get('reranking_ms', 0.0)
+                    total_ms = timings.get('end_to_end_ms') or result.get('total_time_ms', 0.0)
+
+                    row2_cols[0].metric("🎯 Rerank", f"{rerank_ms:.1f}ms")
+                    row2_cols[1].metric("🤖 LLM", f"{llm_ms:.1f}ms")
+                    row2_cols[2].metric("⏱️ Total", f"{total_ms:.1f}ms")
+
+                    token_usage = result.get("token_usage") or {}
+                    if not isinstance(token_usage, dict):
+                        token_usage = {}
+
+                    token_cost_usd = float(result.get("token_cost_usd") or 0.0)
+                    prompt_tokens = int(token_usage.get("prompt", 0) or 0)
+                    completion_tokens = int(token_usage.get("completion", 0) or 0)
+                    total_tokens = int(token_usage.get("total", prompt_tokens + completion_tokens) or 0)
+
+                    if token_usage or token_cost_usd:
+                        st.markdown("**Token Usage & Cost**")
+                        token_cols = st.columns(4)
+                        token_cols[0].metric("Prompt Tokens", prompt_tokens)
+                        token_cols[1].metric("Completion Tokens", completion_tokens)
+                        token_cols[2].metric("Total Tokens", total_tokens)
+                        token_cols[3].metric("Token Cost (USD)", f"${token_cost_usd:.4f}")
+
+                    vector_used = result.get("vector_limit_used") or timings.get("vector_limit_used")
+                    content_used = result.get("content_char_limit_used") or timings.get("content_char_limit_used")
+                    reranker_mode = result.get("reranker_mode") or timings.get("reranker_mode")
+                    capsule = []
+                    if vector_used is not None:
+                        capsule.append(f"vector limit {vector_used}")
+                    if content_used:
+                        capsule.append(f"content limit {content_used}")
+                    else:
+                        capsule.append("full content")
+                    if reranker_mode:
+                        capsule.append(f"reranker mode {reranker_mode}")
+                    st.caption(" | ".join(capsule))
+
+                    if models_info:
+                        st.markdown("**Models Used**")
+                        st.markdown(
+                            f"- Embedding: `{format_model_label(models_info.get('embedding'))}`\n"
+                            f"- Reranker: `{format_model_label(models_info.get('reranker'))}`\n"
+                            f"- LLM: `{models_info.get('llm', '—')}`"
+                        )
+
+                    # Update RAG stats
+                    retrieval_ms = result.get('retrieval_time_ms', 0.0)
+                    rerank_ms = timings.get('rerank_ms', 0.0)
+                    confidence = result.get('confidence', 0.0)
+                    current_reranker_choice = st.session_state.get("rag_reranker_choice", "primary")
+
+                    st.session_state.rag_stats["total_queries"] += 1
+                    st.session_state.rag_stats["total_retrieval_ms"] += retrieval_ms
+                    st.session_state.rag_stats["total_rerank_ms"] += rerank_ms
+                    st.session_state.rag_stats["total_llm_ms"] += llm_ms
+                    st.session_state.rag_stats["total_tokens"] += total_tokens
+                    st.session_state.rag_stats["total_cost_usd"] += token_cost_usd
+
+                    # Update average confidence
+                    old_avg = st.session_state.rag_stats["avg_confidence"]
+                    n = st.session_state.rag_stats["total_queries"]
+                    st.session_state.rag_stats["avg_confidence"] = ((old_avg * (n - 1)) + confidence) / n
+
+                    # Track reranker usage
+                    if current_reranker_choice == "primary":
+                        st.session_state.rag_stats["primary_reranker_count"] += 1
+                    elif current_reranker_choice == "fallback":
+                        st.session_state.rag_stats["fallback_reranker_count"] += 1
+
+                    # Display citation sources
+                    citations = result.get("citations", [])
+                    if citations:
+                        with st.expander("📎 View Sources"):
+                            for i, citation in enumerate(citations, 1):
+                                st.markdown(f"**[{i}] {citation.get('source', 'Unknown')}**")
+                                st.markdown(f"- Score: {citation.get('score', 0):.3f}")
+                                content = citation.get('content', '')
+                                snippet = content[:200] + "..." if len(content) > 200 else content
+                                st.markdown(f"- Content: {snippet}")
+                                st.markdown("")
+
+                    # Ask if continue
+                    st.markdown("\n**Continue asking questions or type 'q'(quit) to exit RAG mode.**")
+
+                    # Collect RAG metrics
+                    st.session_state.rag_metrics["retrieval_times"].append(result.get('retrieval_time_ms', 0))
+                    st.session_state.rag_metrics["confidences"].append(result.get('confidence', 0))
+
+                    # Save to message history and display immediately
+                    metrics_parts = [
+                        f"Retrieval: {result.get('retrieval_time_ms', 0):.1f}ms",
+                        f"Embed: {timings.get('embed_ms', 0.0):.1f}ms",
+                        f"Vector: {timings.get('vector_ms', 0.0):.1f}ms",
+                        f"Rerank: {timings.get('rerank_ms', 0.0):.1f}ms",
+                        f"LLM: {llm_ms:.1f}ms",
+                    ]
+                    if prompt_tokens or completion_tokens:
+                        metrics_parts.append(f"Tokens: {total_tokens}")
+                    if token_cost_usd:
+                        metrics_parts.append(f"Token Cost: ${token_cost_usd:.4f}")
+                    metrics_summary = " | ".join(metrics_parts)
+                    model_summary = (
+                        f"Embedding: {format_model_label(models_info.get('embedding'))}, "
+                        f"Reranker: {format_model_label(models_info.get('reranker'))}, "
+                        f"LLM: {models_info.get('llm', '—')}"
+                    )
+
+                    # Save full answer with metrics to chat history
+                    # Use result['answer'] which works for both streaming (cleaned_answer) and non-streaming (Smart RAG)
+                    answer_text = result.get('answer', '')
+                    full_response = (
+                        f"**Answer:**\n\n{answer_text}\n\n---\n\n"
+                        f"**Metrics:** {metrics_summary} | Confidence: {result.get('confidence', 0):.3f} "
+                        f"| Chunks: {result.get('num_chunks_retrieved', 0)}\n"
+                        f"**Models:** {model_summary}\n\n"
+                        "**Continue asking questions or type 'q'(quit) to exit RAG mode.**"
+                    )
+                    append_chat_history("assistant", full_response)
+
+                    stored_token_usage = None
+                    if token_usage or prompt_tokens or completion_tokens:
+                        stored_token_usage = {
+                            "prompt": prompt_tokens,
+                            "completion": completion_tokens,
+                            "total": total_tokens,
+                        }
+
+                    st.session_state.metrics_history["timestamps"].append(datetime.now())
+                    st.session_state.metrics_history["latencies"].append(total_ms)
+                    st.session_state.metrics_history["prompt_tokens"].append(prompt_tokens)
+                    st.session_state.metrics_history["completion_tokens"].append(completion_tokens)
+                    st.session_state.metrics_history["costs"].append(token_cost_usd)
+                    st.session_state.metrics_history["services"].append("rag")
+
+                    st.session_state.rag_last_summary = {
+                        "timings": {
+                            "embed_ms": timings.get("embed_ms", 0.0),
+                            "vector_ms": timings.get("vector_ms", 0.0),
+                            "rerank_ms": timings.get("rerank_ms", 0.0),
+                            "llm_ms": llm_ms,
+                            "end_to_end_ms": total_ms,
+                        },
+                        "models": models_info,
+                        "vector_limit": vector_used,
+                        "content_limit": content_used,
+                        "reranker_mode": reranker_mode,
+                        "token_usage": stored_token_usage,
+                        "token_cost_usd": token_cost_usd,
+                    }
+
+                else:
+                    error_msg = f"❌ Error: {response.status_code}"
                     st.error(error_msg)
                     append_chat_history("assistant", error_msg)
+
+            except Exception as e:
+                error_msg = f"❌ Request failed: {e}"
+                st.error(error_msg)
+                append_chat_history("assistant", error_msg)
 
     # =====================================================================
     # Trip Planning Mode - Full replication of chat_agent.py
@@ -2279,9 +3662,9 @@ if current_mode == "rag":
 
 elif current_mode == "trip" and prompt and prompt != "__MODE_ACTIVATED__":
     if prompt and _is_quit(prompt):
+        _cleanup_mode_state("trip")
         st.session_state.mode = "general"
-        st.session_state.awaiting_confirmation = False
-        append_chat_history("assistant", "👋 Exited RAG mode.")
+        append_chat_history("assistant", "👋 Exited Trip Planning mode.")
         st.rerun()
 
 
@@ -2711,9 +4094,9 @@ elif current_mode == "code" and prompt and prompt != "__MODE_ACTIVATED__":
         f"force_lang={st.session_state.get('code_force_language')}"
     )
     if prompt and _is_quit(prompt):
+        _cleanup_mode_state("code")
         st.session_state.mode = "general"
-        st.session_state.awaiting_confirmation = False
-        append_chat_history("assistant", "👋 Exited RAG mode.")
+        append_chat_history("assistant", "👋 Exited Code Generation mode.")
         st.rerun()
 
     with st.chat_message("assistant"):
@@ -2845,7 +4228,7 @@ elif current_mode == "code" and prompt and prompt != "__MODE_ACTIVATED__":
                     if initial_plan_summary:
                         st.markdown(f"- {initial_plan_summary}")
                     if initial_plan_steps:
-                        st.markdown("\n".join([f"  {idx + 1}. {step}" for idx, step in enumerate(initial_plan_steps)]))
+                        st.markdown("\n".join([f"  {step}" for step in initial_plan_steps]))
 
                 # Display generated code
                 st.markdown("**Generated Code:**")
@@ -3059,9 +4442,7 @@ elif current_mode == "code" and prompt and prompt != "__MODE_ACTIVATED__":
                     if initial_plan_summary:
                         plan_text += f"Summary: {initial_plan_summary}\n"
                     if initial_plan_steps:
-                        plan_text += "\n".join(
-                            [f"{idx + 1}. {step}" for idx, step in enumerate(initial_plan_steps)]
-                        )
+                        plan_text += "\n".join(initial_plan_steps)
                     summary_sections.append(f"**Initial Plan:**\n{plan_text.strip()}")
 
                 generated_code = result.get("code", "")
@@ -3224,7 +4605,7 @@ Respond with ONLY ONE WORD: rag, trip, code, or general"""
                     ])
 
                     intent_response = client.chat.completions.create(
-                        model=os.getenv("OPENAI_MODEL", "Gpt4o"),
+                        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                         messages=intent_messages,
                         temperature=0,
                         max_tokens=10
@@ -3235,17 +4616,17 @@ Respond with ONLY ONE WORD: rag, trip, code, or general"""
 
                     # Route based on intent
                     if intent == "rag":
-                        st.session_state.mode = "rag"
+                        switch_mode("rag", always_show_message=True)
                         st.session_state.pending_prompt = prompt
                         st.rerun()
 
                     elif intent == "trip":
-                        st.session_state.mode = "trip"
+                        switch_mode("trip", always_show_message=True)
                         st.session_state.pending_prompt = prompt
                         st.rerun()
 
                     elif intent == "code":
-                        st.session_state.mode = "code"
+                        switch_mode("code", always_show_message=True)
                         st.session_state.pending_prompt = prompt
                         st.rerun()
 
@@ -3335,3 +4716,15 @@ If the user asks about trip planning, documents, or code, suggest they use the s
 else:
     if prompt:
         st.sidebar.error(f"⚠️ NO BRANCH MATCHED! mode={current_mode!r}, prompt={prompt!r}")
+
+
+# =====================================================================
+# AI Governance Info Modal
+# =====================================================================
+if st.session_state.get("show_governance_info", False):
+    with st.expander("🛡️ AI Governance Framework", expanded=True):
+        show_governance_info()
+
+        if st.button("Close", key="close_governance_info"):
+            st.session_state.show_governance_info = False
+            st.rerun()

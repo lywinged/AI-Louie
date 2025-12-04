@@ -1,0 +1,424 @@
+{
+  "title": "Data Drift Monitoring",
+  "tags": [
+    "drift",
+    "data-quality",
+    "ai-louie"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 16,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 999,
+      "title": "",
+      "type": "text",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "html",
+        "content": "\n<div style=\"text-align: center; margin-bottom: 8px;\">\n    <div style=\"display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center;\">\n        <a href=\"/d/system-overview\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">System Overview</a> <a href=\"/d/llm-metrics\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">LLM Metrics</a> <a href=\"/d/rag-performance\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">RAG Performance</a> <span style=\"padding: 8px 16px; background: #3274D9; color: white; border-radius: 4px; font-weight: bold; margin: 0 4px;\">Drift Monitoring</span> <a href=\"/d/alerts-overview\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">Alerts Overview</a>\n    </div>\n</div>\n"
+      },
+      "transparent": true
+    },
+    {
+      "id": 1,
+      "title": "Chat Interactions - Success Rate (Last Hour)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_request_total{endpoint=\"rag\",status=\"success\"}[1h])) / sum(rate(llm_request_total{endpoint=\"rag\"}[1h]))"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              {
+                "value": 0,
+                "color": "red"
+              },
+              {
+                "value": 0.95,
+                "color": "yellow"
+              },
+              {
+                "value": 0.99,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "RAG Interactions - Success Rate (Last Hour)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 7
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(rag_request_total{status=\"success\"}[1h])) / sum(rate(rag_request_total[1h]))"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "steps": [
+              {
+                "value": 0,
+                "color": "red"
+              },
+              {
+                "value": 0.95,
+                "color": "yellow"
+              },
+              {
+                "value": 0.99,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Chat Interactions - Total Count (Last Hour)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 7
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(llm_request_total{endpoint=\"rag\"}[1h]))"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "RAG Interactions - Total Count (Last Hour)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 7
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(rag_request_total[1h]))"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Chat - Average Token Usage Trend",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_token_usage_total{token_type=\"prompt\"}[5m])) / sum(rate(llm_request_total{endpoint=\"rag\",status=\"success\"}[5m]))",
+          "legendFormat": "Prompt Tokens (avg)"
+        },
+        {
+          "expr": "sum(rate(llm_token_usage_total{token_type=\"completion\"}[5m])) / sum(rate(llm_request_total{endpoint=\"rag\",status=\"success\"}[5m]))",
+          "legendFormat": "Completion Tokens (avg)"
+        },
+        {
+          "expr": "sum(rate(llm_token_usage_total[5m])) / sum(rate(llm_request_total{endpoint=\"rag\",status=\"success\"}[5m]))",
+          "legendFormat": "Total Tokens (avg)"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "short",
+          "label": "Tokens"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Chat - Latency Distribution Trend",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(llm_request_duration_seconds_bucket{endpoint=\"rag\"}[5m])) by (le))",
+          "legendFormat": "p50 Latency"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(llm_request_duration_seconds_bucket{endpoint=\"rag\"}[5m])) by (le))",
+          "legendFormat": "p95 Latency"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(llm_request_duration_seconds_bucket{endpoint=\"rag\"}[5m])) by (le))",
+          "legendFormat": "p99 Latency"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Duration"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "RAG - Average Token Usage Trend",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_token_usage_total{token_type=\"prompt\"}[5m])) / sum(rate(llm_request_total{endpoint=\"rag\",status=\"success\"}[5m]))",
+          "legendFormat": "Prompt Tokens (avg)"
+        },
+        {
+          "expr": "sum(rate(llm_token_usage_total{token_type=\"completion\"}[5m])) / sum(rate(llm_request_total{endpoint=\"rag\",status=\"success\"}[5m]))",
+          "legendFormat": "Completion Tokens (avg)"
+        },
+        {
+          "expr": "sum(rate(llm_token_usage_total[5m])) / sum(rate(llm_request_total{endpoint=\"rag\",status=\"success\"}[5m]))",
+          "legendFormat": "Total Tokens (avg)"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "short",
+          "label": "Tokens"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "RAG - Latency Distribution Trend",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(rag_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50 Latency"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(rag_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95 Latency"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(rag_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99 Latency"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Duration"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Chat - Error Rate Trend",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_request_total{endpoint=\"rag\",status=\"error\"}[5m])) / sum(rate(llm_request_total{endpoint=\"rag\"}[5m]))",
+          "legendFormat": "Error Rate"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "percentunit",
+          "label": "Error Rate",
+          "max": 1,
+          "min": 0
+        }
+      ],
+      "alert": {
+        "conditions": [
+          {
+            "evaluator": {
+              "params": [
+                0.05
+              ],
+              "type": "gt"
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": [
+                "A",
+                "5m",
+                "now"
+              ]
+            },
+            "reducer": {
+              "params": [],
+              "type": "avg"
+            },
+            "type": "query"
+          }
+        ],
+        "executionErrorState": "alerting",
+        "frequency": "1m",
+        "handler": 1,
+        "name": "Chat Error Rate Alert",
+        "noDataState": "no_data",
+        "notifications": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "RAG - Error Rate Trend",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(rag_request_total{status=\"error\"}[5m])) / sum(rate(rag_request_total[5m]))",
+          "legendFormat": "Error Rate"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "percentunit",
+          "label": "Error Rate",
+          "max": 1,
+          "min": 0
+        }
+      ],
+      "alert": {
+        "conditions": [
+          {
+            "evaluator": {
+              "params": [
+                0.05
+              ],
+              "type": "gt"
+            },
+            "operator": {
+              "type": "and"
+            },
+            "query": {
+              "params": [
+                "A",
+                "5m",
+                "now"
+              ]
+            },
+            "reducer": {
+              "params": [],
+              "type": "avg"
+            },
+            "type": "query"
+          }
+        ],
+        "executionErrorState": "alerting",
+        "frequency": "1m",
+        "handler": 1,
+        "name": "RAG Error Rate Alert",
+        "noDataState": "no_data",
+        "notifications": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Data Quality Notes",
+      "type": "text",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "options": {
+        "content": "# Data Drift Monitoring\n\nThis dashboard tracks data quality metrics for Chat and RAG interactions:\n\n- **Success Rate**: Percentage of successful requests\n- **Token Usage**: Average tokens per request (prompt, completion, total)\n- **Latency**: p50/p95/p99 response times\n- **Error Rate**: Percentage of failed requests\n\n## Drift Detection\n\nFor detailed drift analysis, use the monitoring API:\n\n```bash\n# Get data quality summary\ncurl \"http://localhost:8888/api/monitoring/data-quality/summary?interaction_type=chat&time_window_hours=24\"\n\n# Generate drift report (requires sufficient data: 150+ interactions)\ncurl -X POST http://localhost:8888/api/monitoring/data-quality/drift-report \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"interaction_type\": \"chat\", \"reference_window\": 1000, \"current_window\": 100}'\n```\n\n## Alerts\n\n- Chat Error Rate > 5% triggers alert\n- RAG Error Rate > 5% triggers alert\n",
+        "mode": "markdown"
+      }
+    }
+  ],
+  "uid": "drift-monitoring"
+}

@@ -16,6 +16,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Copy application code
 COPY app.py .
+COPY rag_progress_display.py .
+COPY rag_query_with_progress.py .
+COPY rag_tech_display.py .
+COPY pages/ ./pages/
+COPY components/ ./components/
 
 # Expose Streamlit port
 EXPOSE 8501

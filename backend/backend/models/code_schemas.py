@@ -37,8 +37,8 @@ class CodeRequest(BaseModel):
     max_retries: int = Field(default=3, description="Maximum retry attempts on test failure")
     stream_progress: bool = Field(default=True, description="Stream progress updates")
     include_samples: Optional[bool] = Field(
-        default=False,
-        description="If True, evaluate sample assertions and return outputs (may slow execution)",
+        default=True,
+        description="If True, inject print statements to show program output in test results",
     )
 
 
@@ -75,6 +75,10 @@ class RetryAttempt(BaseModel):
 class CodeResponse(BaseModel):
     """Response from code generation"""
     code: str = Field(..., description="Final generated code")
+    explanation: Optional[str] = Field(
+        default=None,
+        description="Natural language explanation of the generated code and its functionality"
+    )
     language: Language = Field(..., description="Programming language used")
     test_passed: bool = Field(..., description="Whether final code passed tests")
     final_test_result: TestResult = Field(..., description="Final test execution result")
@@ -106,6 +110,10 @@ class CodeResponse(BaseModel):
     learning: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Learning system feedback with reward, strategy, and breakdown",
+    )
+    governance_context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="AI Governance context including risk tier, criteria, and checkpoints",
     )
 
 

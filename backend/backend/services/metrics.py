@@ -1,5 +1,35 @@
 from prometheus_client import Counter, Gauge, Histogram
 
+# ========== AI Governance Metrics ==========
+# Track compliance with AI governance criteria (G1-G12)
+
+governance_checkpoint_counter = Counter(
+    "ai_governance_checkpoint_total",
+    "Total number of governance checkpoints executed",
+    ["criteria", "status", "risk_tier"],  # criteria: g1-g12, status: passed|failed|warning
+)
+
+governance_operation_counter = Counter(
+    "ai_governance_operation_total",
+    "Total number of AI operations tracked",
+    ["operation_type", "risk_tier"],  # operation_type: rag|chat|code|statistics
+)
+
+governance_latency_histogram = Histogram(
+    "ai_governance_latency_seconds",
+    "Latency of AI operations by risk tier",
+    ["operation_type", "risk_tier"],
+    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+)
+
+governance_compliance_gauge = Gauge(
+    "ai_governance_compliance_rate",
+    "Current governance compliance rate (0.0-1.0)",
+    ["criteria", "risk_tier"],
+)
+
+# ========== Existing Metrics ==========
+
 role_profile_base_sync_counter = Counter(
     "role_profile_base_sync_total",
     "Count of role base profile synchronization outcomes",
@@ -92,7 +122,7 @@ def _initialize_metrics():
     knowledge_cold_chunks_gauge.set(0)
 
     # Initialize LLM metrics with common models
-    common_models = ["gpt-4", "Gpt4o", "gpt-3.5-turbo", "claude-3-5-sonnet", "deepseek-chat", "deepseek-v3", "deepseek-v3-250324", "deepseek-v3-1-terminus"]
+    common_models = ["gpt-4", "gpt-4o-mini", "gpt-3.5-turbo", "claude-3-5-sonnet", "deepseek-chat", "deepseek-v3", "deepseek-v3-250324", "deepseek-v3-1-terminus"]
     common_endpoints = ["chat", "story_chat", "embedding"]
     for model in common_models:
         llm_token_usage_counter.labels(model=model, token_type="prompt")._value.set(0)
@@ -142,6 +172,17 @@ rag_latency_histogram = Histogram(
     "RAG operation duration in seconds",
     ["operation"],
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+)
+
+# RAG Query Cache Metrics
+rag_query_cache_hits_counter = Counter(
+    "rag_query_cache_hits_total",
+    "Total number of RAG query cache hits",
+)
+
+rag_query_cache_misses_counter = Counter(
+    "rag_query_cache_misses_total",
+    "Total number of RAG query cache misses",
 )
 
 # === Enhanced RAG Performance Metrics ===
@@ -223,6 +264,10 @@ rag_request_counter = Counter(
     ["endpoint", "status"]  # status: success|error|partial
 )
 
+# Initialize RAG request counter to ensure error metrics exist even with 0 errors
+rag_request_counter.labels(endpoint="rag_ask", status="success")._value.set(0)
+rag_request_counter.labels(endpoint="rag_ask", status="error")._value.set(0)
+
 # Model version tracking
 model_info_gauge = Gauge(
     "model_version_info",
@@ -253,6 +298,8 @@ __all__ = [
     "circuit_breaker_state_gauge",
     "rag_operation_counter",
     "rag_latency_histogram",
+    "rag_query_cache_hits_counter",
+    "rag_query_cache_misses_counter",
     # Enhanced RAG metrics
     "pgvector_query_duration_histogram",
     "pgvector_query_counter",

@@ -47,8 +47,11 @@ services:
       - "8888:8888"
     volumes:
       - ./models:/app/models:ro
+      - ./cache:/app/cache
       - ./data:/app/data
       - ./chat_sessions.sqlite3:/app/chat_sessions.sqlite3
+      - ./cache:/app/cache  # BM25 index and query cache storage
+      - ./config:/app/config:ro  # Pre-warmed bandit weights (read-only)
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
@@ -57,17 +60,36 @@ services:
       - ONNX_RERANK_MODEL_PATH=/app/models/minilm-reranker-onnx
       - EMBED_FALLBACK_MODEL_PATH=/app/models/minilm-embed-int8
       - RERANK_FALLBACK_MODEL_PATH=/app/models/minilm-reranker-onnx
-      - ENABLE_REMOTE_INFERENCE=false
+      - RERANK_SCORE_THRESHOLD=${RERANK_SCORE_THRESHOLD:--20.0}
+      - ENABLE_REMOTE_INFERENCE=true
+      - EMBEDDING_SERVICE_URL=http://inference:8001
+      - RERANK_SERVICE_URL=http://inference:8001
       - USE_ONNX_INFERENCE=${USE_ONNX_INFERENCE:-true}
-      - OPENAI_API_KEY=sk-zM2MxgXhXnusmExHx1sKyw
-      - OPENAI_BASE_URL=https://aiunifier.wonderfulrock-83cb33fd.australiaeast.azurecontainerapps.io
-      - OPENAI_MODEL=Gpt4o
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_MODEL=${OPENAI_MODEL}
       - QDRANT_SEED_PATH=${QDRANT_SEED_PATH}
       - QDRANT_SEED_VECTOR_SIZE=${QDRANT_SEED_VECTOR_SIZE:-384}
       - QDRANT_SEED_TARGET_COUNT=${QDRANT_SEED_TARGET_COUNT:-138000}
       - RAG_VECTOR_SIZE=${RAG_VECTOR_SIZE:-384}
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-16}
       - PYTHONUNBUFFERED=1
+      - OTLP_ENDPOINT=http://jaeger:4317
+      - ENABLE_TELEMETRY=${ENABLE_TELEMETRY:-true}
+      - GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Advanced RAG Features
+      - ENABLE_HYBRID_SEARCH=${ENABLE_HYBRID_SEARCH:-true}
+      - HYBRID_ALPHA=${HYBRID_ALPHA:-0.7}
+      - BM25_TOP_K=${BM25_TOP_K:-25}
+      - ENABLE_QUERY_CACHE=${ENABLE_QUERY_CACHE:-true}
+      - QUERY_CACHE_SIMILARITY_THRESHOLD=${QUERY_CACHE_SIMILARITY_THRESHOLD:-0.85}
+      - QUERY_CACHE_MAX_SIZE=${QUERY_CACHE_MAX_SIZE:-1000}
+      - QUERY_CACHE_TTL_HOURS=${QUERY_CACHE_TTL_HOURS:-24}
+      - ENABLE_QUERY_CLASSIFICATION=${ENABLE_QUERY_CLASSIFICATION:-true}
+      - ENABLE_SELF_RAG=${ENABLE_SELF_RAG:-true}
+      - SELF_RAG_CONFIDENCE_THRESHOLD=${SELF_RAG_CONFIDENCE_THRESHOLD:-0.75}
+      - SELF_RAG_MAX_ITERATIONS=${SELF_RAG_MAX_ITERATIONS:-3}
+      - SELF_RAG_MIN_IMPROVEMENT=${SELF_RAG_MIN_IMPROVEMENT:-0.05}
     depends_on:
       qdrant:
         condition: service_started
@@ -86,17 +108,20 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: streamlit-ui
+    env_file:
+      - .env
     ports:
       - "18501:8501"
     environment:
       - BACKEND_URL=http://backend:8888
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
-      - OPENAI_API_KEY=sk-zM2MxgXhXnusmExHx1sKyw
-      - OPENAI_BASE_URL=https://aiunifier.wonderfulrock-83cb33fd.australiaeast.azurecontainerapps.io
-      - OPENAI_MODEL=Gpt4o
+      # - OPENAI_API_KEY=sk-zM2MxgXhXnusmExHx1sKyw
+      # - OPENAI_BASE_URL=https://aiunifier.wonderfulrock-83cb33fd.australiaeast.azurecontainerapps.io
+      - OPENAI_MODEL=gpt-4o-mini
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
@@ -104,8 +129,77 @@ services:
       timeout: 10s
       retries: 3
 
+  # Blackbox Exporter for HTTP endpoint monitoring
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: blackbox-exporter
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./monitoring/prometheus/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    command:
+      - '--config.file=/etc/blackbox_exporter/config.yml'
+    restart: unless-stopped
+
+  # Prometheus Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - backend
+      - blackbox-exporter
+    restart: unless-stopped
+
+  # Grafana Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Jaeger Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC receiver
+      - "4318:4318"    # OTLP HTTP receiver
+      - "14268:14268"  # Jaeger collector HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - LOG_LEVEL=info
+    restart: unless-stopped
+
 volumes:
   qdrant_storage:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:

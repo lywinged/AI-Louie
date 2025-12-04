@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Quick test to verify Gpt4o API sync is working correctly
+Quick test to verify gpt-4o-mini API sync is working correctly
 Tests the updated chat_service.py with new API configuration
 """
 import asyncio
@@ -18,15 +18,15 @@ from backend.services.chat_service import ChatService
 
 
 async def test_chat_service():
-    """Test that ChatService works with new Gpt4o configuration"""
+    """Test that ChatService works with new gpt-4o-mini configuration"""
     print("=" * 60)
-    print("Gpt4o API Sync Verification Test")
+    print("gpt-4o-mini API Sync Verification Test")
     print("=" * 60)
 
     # Check environment variables
     api_url = os.getenv("OPENAI_BASE_URL")
     api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "Gpt4o")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     print(f"\n📋 Configuration:")
     print(f"  OPENAI_BASE_URL: {api_url}")
@@ -78,7 +78,7 @@ async def test_chat_service():
         print()
 
         print("=" * 60)
-        print("✅ All tests passed! Gpt4o API sync is working correctly.")
+        print("✅ All tests passed! gpt-4o-mini API sync is working correctly.")
         print("=" * 60)
 
         return True

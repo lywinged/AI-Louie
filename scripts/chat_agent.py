@@ -293,7 +293,7 @@ Rules:
 - ONLY return the JSON object, no explanation"""
 
         response = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "Gpt4o"),
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=200

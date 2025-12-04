@@ -2,7 +2,7 @@
 Task 3.1: Conversational Chat Core
 
 Features:
-- Streaming chat with Gpt4o
+- Streaming chat with gpt-4o-mini
 - Persistent conversation history (last N messages)
 - Token counting and cost tracking
 - Latency monitoring
@@ -17,6 +17,12 @@ from openai import AsyncOpenAI
 from backend.models.chat_schemas import ChatMessage, ChatResponse
 from backend.services.llm_tracker import get_llm_tracker
 from backend.utils.openai import sanitize_messages
+from backend.services.metrics import (
+    llm_request_counter,
+    llm_token_usage_counter,
+    llm_cost_counter,
+    llm_request_duration_histogram,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +44,7 @@ class ChatService:
             client_kwargs["base_url"] = base_url
 
         self.client = AsyncOpenAI(**client_kwargs)
-        self.model_name = os.getenv("OPENAI_MODEL", "Gpt4o")
+        self.model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
         # Initialize conversation history
         self.conversation_history: List[ChatMessage] = []
@@ -114,7 +120,7 @@ class ChatService:
             completion_tokens = response.usage.completion_tokens
             total_tokens = response.usage.total_tokens
 
-            # Calculate cost (Gpt4o pricing)
+            # Calculate cost (gpt-4o-mini pricing)
             # Input: $2.50 / 1M tokens, Output: $10.00 / 1M tokens
             cost_usd = (
                 (prompt_tokens / 1_000_000) * 2.50 +
@@ -129,6 +135,30 @@ class ChatService:
                 duration=duration,
                 endpoint="chat",
             )
+
+            # Record Prometheus metrics
+            llm_request_counter.labels(
+                model=self.model_name,
+                endpoint="chat",
+                status="success"
+            ).inc()
+
+            llm_token_usage_counter.labels(
+                model=self.model_name,
+                token_type="prompt"
+            ).inc(prompt_tokens)
+
+            llm_token_usage_counter.labels(
+                model=self.model_name,
+                token_type="completion"
+            ).inc(completion_tokens)
+
+            llm_cost_counter.labels(model=self.model_name).inc(cost_usd)
+
+            llm_request_duration_histogram.labels(
+                model=self.model_name,
+                endpoint="chat"
+            ).observe(duration)
 
             logger.info(
                 f"✅ Chat completion - Tokens: {total_tokens}, "
@@ -145,6 +175,19 @@ class ChatService:
             )
 
         except Exception as e:
+            # Record error metrics
+            llm_request_counter.labels(
+                model=self.model_name,
+                endpoint="chat",
+                status="error"
+            ).inc()
+
+            duration = time.time() - start_time
+            llm_request_duration_histogram.labels(
+                model=self.model_name,
+                endpoint="chat"
+            ).observe(duration)
+
             logger.error(f"❌ Chat completion failed: {e}", exc_info=True)
             raise
 

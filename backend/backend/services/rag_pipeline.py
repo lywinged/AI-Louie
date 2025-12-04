@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Tuple, Union, Optional
+from pathlib import Path
 
 from fastapi.concurrency import run_in_threadpool
 from openai import AsyncOpenAI
@@ -26,13 +27,27 @@ from backend.services.onnx_inference import (
     reranker_is_cpu_only,
     switch_to_fallback_reranker,
     set_reranker_model_path,
+    set_embedding_model_path,
     get_current_reranker_path,
+    get_current_embed_path,
     _has_cuda_available,
 )
+from backend.services.query_classifier import get_query_classifier, QueryDifficulty
 from backend.services.qdrant_client import ensure_collection, get_qdrant_client
 from backend.services.token_counter import get_token_counter, TokenUsage
 from backend.utils.text_splitter import split_text
 from backend.utils.openai import sanitize_messages
+from backend.services.metrics import (
+    llm_request_counter,
+    llm_token_usage_counter,
+    llm_cost_counter,
+    llm_request_duration_histogram,
+    rag_request_counter,
+    rag_request_duration_histogram,
+    embedding_duration_histogram,
+    rerank_duration_histogram,
+    rerank_score_distribution_histogram,
+)
 
 
 COLLECTION_NAME = settings.QDRANT_COLLECTION
@@ -45,6 +60,16 @@ _AUTHOR_QUESTION_PATTERN = re.compile(
     r"\bwho\s+(?:wrote|is\s+the\s+author\s+of|authored)\b",
     flags=re.IGNORECASE,
 )
+_EXCEL_TOOL_KEYWORDS = [
+    "反向用电",
+    "抄表",
+    "发电",
+    "kwh",
+    "电量",
+    "电表",
+    "excel",
+    "xlsx",
+]
 
 VECTOR_LIMIT_MIN = 5
 VECTOR_LIMIT_MAX = 20
@@ -53,6 +78,83 @@ CONTENT_CHAR_MAX = 1000
 DEFAULT_CONTENT_CHAR_LIMIT = 300
 
 _token_counter = get_token_counter()
+
+
+def _select_adaptive_models(question: str) -> Dict[str, Any]:
+    """
+    Adaptively select embedding and reranker models based on query difficulty.
+
+    Strategy:
+    - SIMPLE: Use fast MiniLM (simple factual queries)
+    - MODERATE: Use BGE if available, otherwise MiniLM
+    - COMPLEX: Always use BGE (relationships, comparisons, deep reasoning)
+
+    Args:
+        question: User's question
+
+    Returns:
+        Dict with model selection info (difficulty, embedding_path, reranker_path, reason)
+    """
+    # Skip if remote inference enabled
+    if inference_config.ENABLE_REMOTE_INFERENCE:
+        return {
+            'difficulty': 'remote',
+            'embedding_path': 'remote_service',
+            'reranker_path': 'remote_service',
+            'reason': 'Remote inference enabled - using remote service'
+        }
+
+    # Classify query difficulty
+    classifier = get_query_classifier()
+    difficulty, difficulty_reason = classifier.classify_query(question)
+
+    # Check if BGE models are available
+    bge_embed_path = settings.ONNX_EMBED_MODEL_PATH  # BGE is primary model
+    bge_rerank_path = settings.ONNX_RERANK_MODEL_PATH  # BGE is primary model
+    minilm_embed_path = settings.EMBED_FALLBACK_MODEL_PATH  # MiniLM is fallback
+    minilm_rerank_path = settings.RERANK_FALLBACK_MODEL_PATH  # MiniLM is fallback
+
+    bge_available = bool(bge_embed_path and bge_rerank_path)
+
+    # Get recommended models
+    recommended = classifier.get_recommended_models(difficulty, bge_available)
+
+    # Extract paths
+    embedding_path = recommended['embedding']
+    reranker_path = recommended['reranker']
+    selection_reason = recommended['reason']
+
+    # Switch models if needed
+    current_embed = get_current_embed_path()
+    current_rerank = get_current_reranker_path()
+
+    if current_embed != embedding_path:
+        logger.info(
+            f"Switching embedding model",
+            from_model=current_embed,
+            to_model=embedding_path,
+            difficulty=difficulty,
+            reason=selection_reason
+        )
+        set_embedding_model_path(embedding_path)
+
+    if current_rerank != reranker_path:
+        logger.info(
+            f"Switching reranker model",
+            from_model=current_rerank,
+            to_model=reranker_path,
+            difficulty=difficulty,
+            reason=selection_reason
+        )
+        set_reranker_model_path(reranker_path)
+
+    return {
+        'difficulty': difficulty,
+        'difficulty_reason': difficulty_reason,
+        'embedding_path': embedding_path,
+        'reranker_path': reranker_path,
+        'selection_reason': selection_reason
+    }
 
 
 def _get_openai_client() -> AsyncOpenAI:
@@ -104,6 +206,98 @@ def _get_vector_size() -> int:
     from backend.services.onnx_inference import get_embedding_model
 
     return get_embedding_model().vector_size
+
+
+def _should_use_excel_tool(question: str, chunks: List["RetrievedChunk"]) -> bool:
+    """Heuristic: decide if we should analyze Excel uploads with a tool."""
+    lowered = question.lower()
+    if not any(k in lowered for k in _EXCEL_TOOL_KEYWORDS):
+        return False
+    for chunk in chunks:
+        meta = chunk.metadata or {}
+        doc_type = meta.get("doc_type") or ""
+        file_path = meta.get("file_path") or ""
+        if str(doc_type).lower() == "excel":
+            return True
+        if isinstance(file_path, str) and file_path.lower().endswith((".xlsx", ".xls")):
+            return True
+    return False
+
+
+def _analyze_excel_file(file_path: str, uploaded_file: str) -> Optional[Dict[str, Any]]:
+    """Parse Excel and compute reverse energy totals (heuristic)."""
+    try:
+        import pandas as pd
+    except Exception as exc:  # pragma: no cover - runtime import
+        logger.warning("pandas not available for excel analysis: %s", exc)
+        return None
+
+    path = Path(file_path)
+    if not path.exists():
+        logger.warning("Excel file not found for analysis: %s", file_path)
+        return None
+    try:
+        df = pd.read_excel(path)
+    except Exception as exc:
+        logger.warning("Failed to read excel %s: %s", file_path, exc)
+        return None
+
+    reverse_idx = None
+    for idx, row in df.iterrows():
+        if row.astype(str).str.contains("反向用电", na=False).any():
+            reverse_idx = idx
+            break
+    if reverse_idx is None:
+        return None
+
+    slice_df = df.iloc[reverse_idx: reverse_idx + 5]
+    col_start = None
+    col_end = None
+    for c in df.columns:
+        if "Unnamed: 4" in str(c):
+            col_start = c
+        if "Unnamed: 5" in str(c):
+            col_end = c
+    if col_start is None and len(df.columns) > 4:
+        col_start = df.columns[4]
+    if col_end is None and len(df.columns) > 5:
+        col_end = df.columns[5]
+    if col_start is None or col_end is None:
+        return None
+
+    labels_col = None
+    for c in df.columns:
+        if "Unnamed: 3" in str(c):
+            labels_col = c
+            break
+    if labels_col is None and len(df.columns) > 3:
+        labels_col = df.columns[3]
+
+    def _to_num(val):
+        try:
+            return float(val)
+        except Exception:
+            return None
+
+    rows = []
+    total = 0.0
+    for _, row in slice_df.iterrows():
+        label = str(row.get(labels_col, "")).strip() if labels_col else ""
+        start = _to_num(row.get(col_start))
+        end = _to_num(row.get(col_end))
+        if start is None or end is None:
+            continue
+        delta = end - start
+        total += delta
+        rows.append({"label": label or "unknown", "start": start, "end": end, "delta": delta})
+
+    return {
+        "uploaded_file": uploaded_file,
+        "file_path": str(path),
+        "reverse_energy_kwh": total,
+        "rows": rows,
+        "method": "row with 反向用电 + 4 rows, delta=end-start",
+    }
 
 
 def _should_switch_reranker(latency_ms: float) -> bool:
@@ -184,6 +378,9 @@ async def _rerank(
 
     global _reranker_switch_locked
 
+    # Use document content for reranking
+    # Keep it simple - let the reranker work with natural content
+    # The LLM will receive metadata separately in the answer generation phase
     docs = [chunk.content for chunk in chunks]
 
     if inference_config.ENABLE_REMOTE_INFERENCE:
@@ -232,6 +429,9 @@ async def _rerank(
                 metadata={**chunk.metadata, "base_score": chunk.score},
             )
         )
+        # Record rerank score distribution
+        model_label = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        rerank_score_distribution_histogram.labels(model=model_label).observe(float(score))
 
     reranked.sort(key=lambda item: item.score, reverse=True)
     return reranked, duration_ms, model_name, reranker_mode
@@ -243,10 +443,14 @@ async def ingest_document(
     *,
     source: str,
     metadata: Dict[str, Any] | None = None,
+    collection_name: str | None = None,
 ) -> DocumentResponse:
     """Chunk a document, embed and upsert into Qdrant."""
+    # Use specified collection or default collection
+    target_collection = collection_name or COLLECTION_NAME
+
     vector_size = _get_vector_size()
-    ensure_collection(vector_size)
+    ensure_collection(vector_size, collection=target_collection)
     client = get_qdrant_client()
 
     document_id = int(time.time() * 1000)
@@ -280,13 +484,14 @@ async def ingest_document(
             )
         )
 
-    client.upsert(collection_name=COLLECTION_NAME, points=points)
+    client.upsert(collection_name=target_collection, points=points)
 
     return DocumentResponse(
         document_id=document_id,
         title=title,
         num_chunks=len(points),
         embedding_time_ms=embed_duration_ms,
+        collection=target_collection,
     )
 
 
@@ -310,19 +515,26 @@ async def retrieve_chunks(
     reranker_override: Optional[str] = None,
     vector_limit_override: Optional[int] = None,
     content_char_limit: Optional[int] = None,
+    collection_name: str | None = None,
 ) -> Union[
     Tuple[List[RetrievedChunk], float],
     Tuple[List[RetrievedChunk], float, Dict[str, Any]],
 ]:
     """Retrieve relevant chunks from Qdrant and rerank."""
+    # Adaptively select models based on query difficulty
+    model_selection = _select_adaptive_models(question)
+    logger.info("Adaptive model selection %s", model_selection)
+
+    target_collection = collection_name or COLLECTION_NAME
+
     vector_size = _get_vector_size()
-    ensure_collection(vector_size)
+    ensure_collection(vector_size, collection=target_collection)
     client = get_qdrant_client()
 
     tic_total = time.perf_counter()
     candidate_limit = max(top_k, search_limit)
-    # Use 5 as minimum for better CPU performance (less reranking work)
-    vector_limit = max(5, min(8, candidate_limit))
+    # Use 5 as minimum, allow up to 50 for complex queries
+    vector_limit = max(5, min(50, candidate_limit))
 
     if inference_config.ENABLE_REMOTE_INFERENCE:
         embed_model_path = inference_config.EMBEDDING_SERVICE_URL or "remote"
@@ -364,16 +576,18 @@ async def retrieve_chunks(
     embed_start = time.perf_counter()
     query_embedding = (await _embed_texts([question]))[0]
     embed_ms = (time.perf_counter() - embed_start) * 1000
+    logger.info(f"⏱️ Embedding Time: {embed_ms:.2f}ms")
 
     vector_start = time.perf_counter()
     base_results = client.search(
-        collection_name=COLLECTION_NAME,
+        collection_name=target_collection,
         query_vector=query_embedding,
         limit=vector_limit,
         with_payload=["text", "content", "source", "title", "document_id", "chunk_index", "authors", "subjects"],
         # Fetch authors and subjects for proper metadata display
     )
     vector_ms = (time.perf_counter() - vector_start) * 1000
+    logger.info(f"⏱️ Vector Search Time: {vector_ms:.2f}ms (found {len(base_results)} candidates)")
     candidates: dict[str, RetrievedChunk] = {}
 
     candidate_start = time.perf_counter()
@@ -431,15 +645,38 @@ async def retrieve_chunks(
 
     candidate_list = list(candidates.values())[:candidate_limit]
     candidate_prep_ms = (time.perf_counter() - candidate_start) * 1000
+    logger.info(f"⏱️ Candidate Preparation Time: {candidate_prep_ms:.2f}ms (prepared {len(candidate_list)} candidates)")
 
     pre_rerank_ms = (time.perf_counter() - tic_total) * 1000
 
+    rerank_start = time.perf_counter()
     reranked, rerank_ms, reranker_model_path, reranker_mode = await _rerank(
         question,
         candidate_list,
         override_choice=reranker_override,
     )
+    logger.info(f"⏱️ Reranking Time: {rerank_ms:.2f}ms (mode: {reranker_mode})")
+
+    # Filter out low-score results
+    filter_start = time.perf_counter()
+    score_threshold = settings.RERANK_SCORE_THRESHOLD
+    filtered_results = [
+        chunk for chunk in reranked
+        if chunk.score >= score_threshold
+    ]
+    filter_ms = (time.perf_counter() - filter_start) * 1000
+
+    # Log if we filtered out results
+    if len(filtered_results) < len(reranked):
+        logger.info(
+            f"⏱️ Filtering Time: {filter_ms:.2f}ms - Filtered {len(reranked) - len(filtered_results)} results below threshold {score_threshold}. "
+            f"Remaining: {len(filtered_results)}"
+        )
+    else:
+        logger.info(f"⏱️ Filtering Time: {filter_ms:.2f}ms - No results filtered")
+
     total_ms = (time.perf_counter() - tic_total) * 1000
+    logger.info(f"⏱️ Total Retrieval Time: {total_ms:.2f}ms")
 
     if include_timings:
         timings = {
@@ -448,25 +685,28 @@ async def retrieve_chunks(
             "candidate_prep_ms": candidate_prep_ms,
             "pre_rerank_ms": pre_rerank_ms,
             "rerank_ms": rerank_ms,
+            "filter_ms": filter_ms,
             "total_ms": total_ms,
             "reranker_model_path": reranker_model_path,
             "embedding_model_path": embed_model_path,
             "vector_limit_used": vector_limit,
             "content_char_limit_used": char_limit_applied,
             "reranker_mode": reranker_mode,
+            "filtered_count": len(reranked) - len(filtered_results),
+            "score_threshold": score_threshold,
         }
         # Return total_ms (includes rerank) instead of pre_rerank_ms
-        return reranked[:top_k], total_ms, timings
+        return filtered_results[:top_k], total_ms, timings
 
     # Return total_ms (includes rerank) instead of pre_rerank_ms
-    return reranked[:top_k], total_ms
+    return filtered_results[:top_k], total_ms
 
 
 async def _generate_answer_with_llm(
     question: str,
     chunks: List[RetrievedChunk],
     *,
-    model: str = "Gpt4o"
+    model: str = "gpt-4o-mini"
 ) -> Tuple[str, Optional[Dict[str, int]], float]:
     """Generate answer using LLM with retrieved context."""
     if not chunks:
@@ -476,8 +716,34 @@ async def _generate_answer_with_llm(
             0.0,
         )
 
+    # Optional: analyze Excel uploads if question hints at calculations
+    excel_result = None
+    if _should_use_excel_tool(question, chunks):
+        for chunk in chunks:
+            meta = chunk.metadata or {}
+            file_path = meta.get("file_path")
+            uploaded_file = meta.get("uploaded_file") or meta.get("filename")
+            if file_path and uploaded_file:
+                excel_result = _analyze_excel_file(file_path, uploaded_file)
+                if excel_result:
+                    break
+
     # Build context from retrieved chunks
     context_parts = []
+    if excel_result:
+        rows_lines = "\n".join(
+            [
+                f"- {r.get('label')}: start {r.get('start')}, end {r.get('end')}, delta {r.get('delta')}"
+                for r in excel_result.get("rows", [])
+            ]
+        )
+        context_parts.append(
+            "Tool: Excel reverse energy analysis\n"
+            f"File: {excel_result.get('uploaded_file')}\n"
+            f"Total reverse energy (kWh): {excel_result.get('reverse_energy_kwh')}\n"
+            f"Details:\n{rows_lines}"
+        )
+
     for i, chunk in enumerate(chunks[:5], 1):  # Use top 5 chunks
         source = chunk.source or "Unknown"
 
@@ -509,27 +775,50 @@ Context (Retrieved Documents):
 Question: {question}
 
 Instructions:
-1. Answer the question based ONLY on the provided context
-2. If the context doesn't contain enough information, say so
-3. Include inline citations using [1], [2], [3] format referring to the sources above
-4. Be concise but complete
-5. If multiple sources support your answer, cite all relevant ones
+1. First, show your **reasoning process**:
+   - What information did you find in the context?
+   - How do the different pieces of information relate to the question?
+   - What inferences can you make based on the available evidence?
+   - Which sources are most relevant and why?
 
-Answer:"""
+2. Then, provide your **final answer**:
+   - Answer the question based on the context and your reasoning
+   - If direct information is not available, synthesize an answer from related information
+   - ALWAYS include inline citations using [1], [2], [3], [4], [5] format
+   - For "who wrote" questions, check the "Authors:" metadata field in ALL sources
+
+Format your response as:
+**Reasoning:**
+[Your step-by-step reasoning process here]
+
+**Answer:**
+[Your final answer with citations here]"""
 
     try:
+        llm_start = time.perf_counter()
+
+        client_init_start = time.perf_counter()
         client = _get_openai_client()
+        client_init_ms = (time.perf_counter() - client_init_start) * 1000
+        logger.info(f"⏱️ OpenAI Client Init Time: {client_init_ms:.2f}ms")
+
+        message_prep_start = time.perf_counter()
         messages = sanitize_messages([
             {"role": "system", "content": "You are a helpful assistant that answers questions based on provided context. Always cite your sources using [1], [2], [3] format."},
             {"role": "user", "content": prompt}
         ])
+        message_prep_ms = (time.perf_counter() - message_prep_start) * 1000
+        logger.info(f"⏱️ Message Preparation Time: {message_prep_ms:.2f}ms")
 
+        api_call_start = time.perf_counter()
         response = await client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=0.3,
             max_tokens=500
         )
+        api_call_ms = (time.perf_counter() - api_call_start) * 1000
+        logger.info(f"⏱️ LLM API Call Time: {api_call_ms:.2f}ms (model: {model})")
 
         answer = response.choices[0].message.content.strip()
         usage = getattr(response, "usage", None)
@@ -547,9 +836,13 @@ Answer:"""
                 timestamp=datetime.utcnow(),
             )
             cost = _token_counter.estimate_cost(usage_obj)
+            logger.info(f"⏱️ LLM Token Usage: {usage.total_tokens} tokens (prompt: {usage.prompt_tokens}, completion: {usage.completion_tokens})")
         else:
             usage_dict = None
             cost = 0.0
+
+        total_llm_ms = (time.perf_counter() - llm_start) * 1000
+        logger.info(f"⏱️ Total LLM Generation Time: {total_llm_ms:.2f}ms")
 
         return answer, usage_dict, cost
 
@@ -557,6 +850,148 @@ Answer:"""
         # Fallback to simple concatenation if LLM fails
         fallback = f"Error generating answer: {str(e)}. Context: {chunks[0].content[:200]}..."
         return fallback, None, 0.0
+
+
+async def _generate_answer_with_llm_stream(
+    question: str,
+    chunks: List[RetrievedChunk],
+    *,
+    model: str = "gpt-4o-mini"
+):
+    """
+    Generate answer using LLM with streaming (yields chunks as they arrive).
+
+    Yields:
+        dict: Streaming chunks with keys:
+            - type: "content" | "metadata" | "error"
+            - data: chunk content or metadata
+    """
+    if not chunks:
+        yield {
+            "type": "content",
+            "data": "I could not find relevant information in the knowledge base to answer your question."
+        }
+        yield {
+            "type": "metadata",
+            "data": {
+                "usage": None,
+                "cost": 0.0,
+                "model": model
+            }
+        }
+        return
+
+    # Build context from retrieved chunks (same as non-streaming)
+    context_parts = []
+    for i, chunk in enumerate(chunks[:5], 1):
+        source = chunk.source or "Unknown"
+        metadata_lines = []
+        if chunk.metadata:
+            title = chunk.metadata.get("title")
+            authors = chunk.metadata.get("authors")
+            if title and title != source:
+                metadata_lines.append(f"Title: {title}")
+            if authors:
+                metadata_lines.append(f"Authors: {authors}")
+
+        header = f"[{i}] Source: {source}"
+        if metadata_lines:
+            header += "\n" + "\n".join(metadata_lines)
+
+        context_parts.append(f"{header}\n{chunk.content}")
+
+    context = "\n\n".join(context_parts)
+
+    prompt = f"""You are a helpful assistant answering questions based on retrieved documents.
+
+Context (Retrieved Documents):
+{context}
+
+Question: {question}
+
+Instructions:
+1. First, show your **reasoning process**:
+   - What information did you find in the context?
+   - How do the different pieces of information relate to the question?
+   - What inferences can you make based on the available evidence?
+   - Which sources are most relevant and why?
+
+2. Then, provide your **final answer**:
+   - Answer the question based on the context and your reasoning
+   - If direct information is not available, synthesize an answer from related information
+   - ALWAYS include inline citations using [1], [2], [3], [4], [5] format
+   - For "who wrote" questions, check the "Authors:" metadata field in ALL sources
+
+Format your response as:
+**Reasoning:**
+[Your step-by-step reasoning process here]
+
+**Answer:**
+[Your final answer with citations here]"""
+
+    try:
+        client = _get_openai_client()
+        messages = sanitize_messages([
+            {"role": "system", "content": "You are a helpful assistant that answers questions based on provided context. Always cite your sources using [1], [2], [3] format."},
+            {"role": "user", "content": prompt}
+        ])
+
+        # Create streaming request
+        stream = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=500,
+            stream=True  # Enable streaming
+        )
+
+        # Stream chunks as they arrive
+        full_content = ""
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                full_content += content
+                yield {
+                    "type": "content",
+                    "data": content
+                }
+
+        # After streaming completes, send metadata
+        # Note: OpenAI doesn't provide usage in streaming mode, so we estimate
+        # TokenUsage is already imported at top of file from token_counter
+        estimated_prompt_tokens = len(prompt.split()) * 1.3  # Rough estimate
+        estimated_completion_tokens = len(full_content.split()) * 1.3
+        estimated_total = int(estimated_prompt_tokens + estimated_completion_tokens)
+
+        usage_obj = TokenUsage(
+            prompt_tokens=int(estimated_prompt_tokens),
+            completion_tokens=int(estimated_completion_tokens),
+            total_tokens=estimated_total,
+            model=model,
+            timestamp=datetime.utcnow(),
+        )
+        cost = _token_counter.estimate_cost(usage_obj)
+
+        yield {
+            "type": "metadata",
+            "data": {
+                "usage": {
+                    "prompt": int(estimated_prompt_tokens),
+                    "completion": int(estimated_completion_tokens),
+                    "total": estimated_total
+                },
+                "cost": cost,
+                "model": model,
+                "full_answer": full_content
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Streaming LLM generation failed: {e}")
+        yield {
+            "type": "error",
+            "data": f"Error generating answer: {str(e)}"
+        }
 
 
 async def answer_question(
@@ -582,6 +1017,26 @@ async def answer_question(
     """
     tic_total = time.perf_counter()
 
+    # Step 0: Check answer cache FIRST (maximum token savings!)
+    from backend.services.enhanced_rag_pipeline import _get_answer_cache
+    answer_cache = _get_answer_cache()
+    if answer_cache:
+        try:
+            cached = await answer_cache.find_cached_answer(question)
+            if cached:
+                logger.info(
+                    "Answer cache HIT - returning cached answer",
+                    query=question[:50],
+                    layer=cached['cache_layer'],
+                    method=cached['cache_method'],
+                    similarity=f"{cached['similarity']:.3f}",
+                    time_ms=f"{cached['time_ms']:.2f}"
+                )
+                # Return cached answer directly, skip all RAG processing!
+                return cached['answer']
+        except Exception:
+            pass  # Silently continue if cache lookup fails
+
     search_limit = max(top_k * 2, 10)
 
     retrieval_kwargs = dict(
@@ -602,8 +1057,9 @@ async def answer_question(
 
     if not chunks:
         if inference_config.ENABLE_REMOTE_INFERENCE:
-            embedding_model_path = inference_config.EMBEDDING_SERVICE_URL or "remote"
-            reranker_model_path = inference_config.RERANK_SERVICE_URL or "remote"
+            # When using remote inference with ONNX models, show the actual ONNX model paths
+            embedding_model_path = settings.ONNX_EMBED_MODEL_PATH or "remote-embed"
+            reranker_model_path = settings.ONNX_RERANK_MODEL_PATH or "remote-rerank"
             reranker_mode = "remote"
         else:
             embedding_model_path = timings.get("embedding_model_path") if timings else getattr(
@@ -640,15 +1096,17 @@ async def answer_question(
         )
 
     # Generate answer with LLM or simple concatenation
-    llm_model = os.getenv("OPENAI_MODEL") or settings.OPENAI_MODEL or "Gpt4o"
+    llm_model = os.getenv("OPENAI_MODEL") or settings.OPENAI_MODEL or "gpt-4o-mini"
     token_usage = None
     token_cost_usd = 0.0
     llm_used = use_llm
     if use_llm:
+        # Limit to top 30 chunks for LLM to improve relevance ratio
+        llm_chunks = chunks[:30]
         tic_llm = time.perf_counter()
         answer, token_usage, token_cost_usd = await _generate_answer_with_llm(
             question,
-            chunks,
+            llm_chunks,
             model=llm_model,
         )
         llm_time_ms = (time.perf_counter() - tic_llm) * 1000
@@ -679,8 +1137,9 @@ async def answer_question(
     })
 
     if inference_config.ENABLE_REMOTE_INFERENCE:
-        embedding_model_path = inference_config.EMBEDDING_SERVICE_URL or "remote"
-        reranker_model_path = inference_config.RERANK_SERVICE_URL or "remote"
+        # When using remote inference with ONNX models, show the actual ONNX model paths
+        embedding_model_path = settings.ONNX_EMBED_MODEL_PATH or "remote-embed"
+        reranker_model_path = settings.ONNX_RERANK_MODEL_PATH or "remote-rerank"
         reranker_mode = "remote"
     else:
         embedding_model_path = timings.get("embedding_model_path") or getattr(
@@ -698,7 +1157,60 @@ async def answer_question(
     vector_limit_used = timings.get("vector_limit_used")
     content_char_limit_used = timings.get("content_char_limit_used")
 
-    return RAGResponse(
+    # Record Prometheus metrics
+    try:
+        rag_request_counter.labels(
+            endpoint="rag_ask",
+            status="success" if chunks else "partial"
+        ).inc()
+
+        rag_request_duration_histogram.labels(
+            endpoint="rag_ask",
+            has_role_filter="no"
+        ).observe(total_time_ms / 1000)
+
+        if timings and "embed_ms" in timings:
+            embedding_duration_histogram.labels(
+                model=llm_model,
+                source="local" if not inference_config.ENABLE_REMOTE_INFERENCE else "remote",
+                batch_size_range="1"
+            ).observe(timings["embed_ms"] / 1000)
+
+        if timings and "rerank_ms" in timings:
+            rerank_duration_histogram.labels(
+                model=llm_model,
+                source="local" if not inference_config.ENABLE_REMOTE_INFERENCE else "remote",
+                candidate_count_range=f"1-10" if len(chunks) <= 10 else "11-50"
+            ).observe(timings["rerank_ms"] / 1000)
+
+        # Record LLM metrics if LLM was used
+        if use_llm and token_usage:
+            llm_request_counter.labels(
+                model=llm_model,
+                endpoint="rag",
+                status="success"
+            ).inc()
+
+            llm_token_usage_counter.labels(
+                model=llm_model,
+                token_type="prompt"
+            ).inc(token_usage.get("prompt", 0))
+
+            llm_token_usage_counter.labels(
+                model=llm_model,
+                token_type="completion"
+            ).inc(token_usage.get("completion", 0))
+
+            llm_cost_counter.labels(model=llm_model).inc(token_cost_usd)
+
+            llm_request_duration_histogram.labels(
+                model=llm_model,
+                endpoint="rag"
+            ).observe(llm_time_ms / 1000)
+    except Exception as metrics_error:
+        logger.warning(f"Failed to record metrics: {metrics_error}")
+
+    response = RAGResponse(
         answer=answer,
         citations=citations,
         retrieval_time_ms=retrieval_ms,
@@ -719,6 +1231,41 @@ async def answer_question(
         vector_limit_used=vector_limit_used,
         content_char_limit_used=content_char_limit_used,
     )
+
+    # Save answer to cache for future queries (with quality checks)
+    if answer_cache and answer:
+        # Quality checks to prevent caching low-quality answers
+        num_citations = len(response.citations) if response.citations else 0
+        num_chunks = response.num_chunks_retrieved
+        confidence = response.confidence
+
+        # Define quality thresholds
+        # NOTE: We don't check confidence as it may be negative (log probability from reranker)
+        MIN_CITATIONS = 1  # At least 1 source citation
+        MIN_CHUNKS = 1     # At least 1 retrieved chunk
+
+        # Check if answer meets quality criteria
+        quality_ok = (
+            num_citations >= MIN_CITATIONS and
+            num_chunks >= MIN_CHUNKS
+        )
+
+        if quality_ok:
+            try:
+                await answer_cache.cache_answer(question, response)
+                logger.info(
+                    "Answer cached successfully for query %s (citations=%d, chunks=%d, confidence=%.2f)",
+                    question[:50], num_citations, num_chunks, confidence
+                )
+            except Exception:
+                pass  # Silently continue if cache save fails
+        else:
+            logger.warning(
+                "Answer NOT cached due to low quality (citations=%d<%d, chunks=%d<%d) for query: %s",
+                num_citations, MIN_CITATIONS, num_chunks, MIN_CHUNKS, question[:50]
+            )
+
+    return response
 
 
 async def ingest_documents_batch(documents: List[Tuple[str, str, str]]) -> List[DocumentResponse]:

@@ -14,12 +14,30 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import uvicorn
+from prometheus_client import Counter, Histogram, make_asgi_app
 
 from inference_service.config import config
 
 # Global ONNX sessions
 embedding_session = None
 rerank_session = None
+
+# Prometheus metrics - use separate registry to avoid conflicts
+from prometheus_client import CollectorRegistry, REGISTRY
+inference_registry = CollectorRegistry()
+
+REQUEST_COUNT = Counter(
+    'inference_requests_total',
+    'Total inference requests',
+    ['endpoint', 'status'],
+    registry=inference_registry
+)
+REQUEST_DURATION = Histogram(
+    'inference_request_duration_seconds',
+    'Request duration in seconds',
+    ['endpoint'],
+    registry=inference_registry
+)
 
 
 # === Pydantic Models (same as before) ===
@@ -305,6 +323,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Mount Prometheus metrics endpoint with custom registry
+metrics_app = make_asgi_app(registry=inference_registry)
+app.mount("/metrics", metrics_app)
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -325,9 +347,11 @@ async def health_check():
 async def embed_texts_api(request: EmbedRequest):
     """Generate text embeddings with ONNX acceleration."""
     if embedding_session is None:
+        REQUEST_COUNT.labels(endpoint="embed", status="error").inc()
         raise HTTPException(status_code=503, detail="Embedding model not loaded")
 
     if not request.texts:
+        REQUEST_COUNT.labels(endpoint="embed", status="error").inc()
         raise HTTPException(status_code=400, detail="texts cannot be empty")
 
     start_time = time.perf_counter()
@@ -343,13 +367,17 @@ async def embed_texts_api(request: EmbedRequest):
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
             embeddings = embeddings / norms
 
-        duration = (time.perf_counter() - start_time) * 1000
+        duration = time.perf_counter() - start_time
+
+        # Record metrics
+        REQUEST_COUNT.labels(endpoint="embed", status="success").inc()
+        REQUEST_DURATION.labels(endpoint="embed").observe(duration)
 
         return EmbedResponse(
             embeddings=embeddings.tolist(),
             model=request.model or "bge-m3-onnx",
             dimension=embeddings.shape[1],
-            processing_time_ms=round(duration, 2),
+            processing_time_ms=round(duration * 1000, 2),
             batch_info={
                 "total_texts": len(request.texts),
                 "batch_size": request.batch_size or config.MAX_BATCH_SIZE
@@ -357,6 +385,7 @@ async def embed_texts_api(request: EmbedRequest):
         )
 
     except Exception as e:
+        REQUEST_COUNT.labels(endpoint="embed", status="error").inc()
         raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
 
 
@@ -364,9 +393,11 @@ async def embed_texts_api(request: EmbedRequest):
 async def rerank_documents_api(request: RerankRequest):
     """Rerank documents with ONNX acceleration."""
     if rerank_session is None:
+        REQUEST_COUNT.labels(endpoint="rerank", status="error").inc()
         raise HTTPException(status_code=503, detail="Rerank model not loaded")
 
     if not request.documents:
+        REQUEST_COUNT.labels(endpoint="rerank", status="error").inc()
         raise HTTPException(status_code=400, detail="documents cannot be empty")
 
     start_time = time.perf_counter()
@@ -385,12 +416,16 @@ async def rerank_documents_api(request: RerankRequest):
         indices = [idx for idx, score in scored_docs]
         sorted_scores = [score for idx, score in scored_docs]
 
-        duration = (time.perf_counter() - start_time) * 1000
+        duration = time.perf_counter() - start_time
+
+        # Record metrics
+        REQUEST_COUNT.labels(endpoint="rerank", status="success").inc()
+        REQUEST_DURATION.labels(endpoint="rerank").observe(duration)
 
         result = RerankResponse(
             scores=sorted_scores,
             indices=indices,
-            processing_time_ms=round(duration, 2)
+            processing_time_ms=round(duration * 1000, 2)
         )
 
         if request.return_documents:
@@ -399,6 +434,7 @@ async def rerank_documents_api(request: RerankRequest):
         return result
 
     except Exception as e:
+        REQUEST_COUNT.labels(endpoint="rerank", status="error").inc()
         raise HTTPException(status_code=500, detail=f"Rerank failed: {str(e)}")
 
 

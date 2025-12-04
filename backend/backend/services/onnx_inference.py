@@ -309,6 +309,14 @@ def get_current_embed_path() -> Optional[str]:
     return _embed_model_path
 
 
+def set_embedding_model_path(model_path: str) -> None:
+    """Force reload of embedding model from a specific path."""
+    global _embed_model_path, _embed_model
+    with _embed_lock:
+        _embed_model = ONNXEmbeddingModel(model_path)
+        _embed_model_path = model_path
+
+
 def switch_to_fallback_mode() -> bool:
     """Switch both embedding and reranker to fallback models."""
     embed_switched = switch_to_fallback_embed()

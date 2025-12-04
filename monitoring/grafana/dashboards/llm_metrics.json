@@ -1,0 +1,215 @@
+{
+  "title": "LLM Metrics Dashboard",
+  "tags": [
+    "llm",
+    "ai-louie"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 16,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 999,
+      "title": "",
+      "type": "text",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "html",
+        "content": "\n<div style=\"text-align: center; margin-bottom: 8px;\">\n    <div style=\"display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center;\">\n        <a href=\"/d/system-overview\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">System Overview</a> <span style=\"padding: 8px 16px; background: #3274D9; color: white; border-radius: 4px; font-weight: bold; margin: 0 4px;\">LLM Metrics</span> <a href=\"/d/rag-performance\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">RAG Performance</a> <a href=\"/d/drift-monitoring\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">Drift Monitoring</a> <a href=\"/d/alerts-overview\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">Alerts Overview</a>\n    </div>\n</div>\n"
+      },
+      "transparent": true
+    },
+    {
+      "id": 1,
+      "title": "LLM Request Rate",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "rate(llm_request_total[5m]) > 0",
+          "legendFormat": "{{model}} - {{endpoint}} - {{status}}"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "reqps",
+          "label": "Requests/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "LLM Token Usage",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "rate(llm_token_usage_total[5m]) > 0",
+          "legendFormat": "{{model}} - {{token_type}}"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "short",
+          "label": "Tokens/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "LLM Cost (USD)",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "expr": "rate(llm_cost_usd_total[5m]) > 0",
+          "legendFormat": "{{model}}"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "currencyUSD",
+          "label": "Cost/sec"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "LLM Request Duration (p95)",
+      "type": "graph",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(llm_request_duration_seconds_bucket{endpoint=\"rag\"}[5m])) by (le, model, endpoint))",
+          "legendFormat": "{{model}} - {{endpoint}}"
+        }
+      ],
+      "yaxes": [
+        {
+          "format": "s",
+          "label": "Duration"
+        },
+        {
+          "format": "short"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Total Token Usage by Model",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "expr": "sum(llm_token_usage_total > 0) by (model)"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Total Cost by Model (USD)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 21
+      },
+      "targets": [
+        {
+          "expr": "sum(llm_cost_usd_total > 0) by (model)"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value",
+        "unit": "currencyUSD"
+      }
+    },
+    {
+      "id": 7,
+      "title": "Success Rate",
+      "type": "gauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 21
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(llm_request_total{status=\"success\"}[5m])) / sum(rate(llm_request_total[5m]))"
+        }
+      ],
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": 0,
+                "color": "red"
+              },
+              {
+                "value": 0.9,
+                "color": "yellow"
+              },
+              {
+                "value": 0.99,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "uid": "llm-metrics"
+}

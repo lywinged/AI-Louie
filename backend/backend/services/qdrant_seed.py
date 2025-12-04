@@ -12,8 +12,9 @@ import logging
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 import requests
 
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_VECTOR_SIZE = int(os.getenv("QDRANT_SEED_VECTOR_SIZE", "1024"))
 DEFAULT_TARGET_COUNT = int(os.getenv("QDRANT_SEED_TARGET_COUNT", "138000"))  # Updated for full corpus
 DEFAULT_BATCH_SIZE = int(os.getenv("QDRANT_SEED_BATCH_SIZE", "200"))
+DEFAULT_MAX_WORKERS = int(os.getenv("QDRANT_SEED_MAX_WORKERS", "4"))  # Parallel upload workers
 
 _seed_lock = threading.Lock()
 _seed_status: Dict[str, Optional[float]] = {
@@ -35,6 +37,7 @@ _seed_status: Dict[str, Optional[float]] = {
     "started_at": None,
     "finished_at": None,
 }
+_uploaded_counter = 0  # Thread-safe counter for parallel uploads
 
 
 def _set_seed_status(**updates: object) -> None:
@@ -101,12 +104,49 @@ def _upload_points(collection: str, points: Iterable[Dict]) -> None:
     response.raise_for_status()
 
 
+def _upload_batch_with_progress(
+    collection: str,
+    batch: List[Dict],
+    batch_num: int,
+    total_points: int,
+    started_at: float,
+) -> int:
+    """Upload a single batch and update progress counter. Returns number of points uploaded."""
+    global _uploaded_counter
+
+    try:
+        _upload_points(collection, batch)
+        batch_size = len(batch)
+
+        # Thread-safe counter update
+        with _seed_lock:
+            _uploaded_counter += batch_size
+            current_count = _uploaded_counter
+
+        # Update status
+        _set_seed_status(
+            state="in_progress",
+            message=f"Uploading batch {batch_num} ({current_count}/{total_points} vectors)",
+            seeded=current_count,
+            total=total_points,
+            started_at=started_at,
+            finished_at=None,
+        )
+
+        logger.info(f"✓ Batch {batch_num}: uploaded {batch_size} vectors ({current_count}/{total_points})")
+        return batch_size
+    except Exception as exc:
+        logger.error(f"✗ Batch {batch_num} failed: {exc}")
+        raise
+
+
 def ensure_seed_collection(
     *,
     seed_path: Path = Path(os.getenv("QDRANT_SEED_PATH", "data/qdrant_seed/assessment_docs_minilm.jsonl")),
     target_count: int = DEFAULT_TARGET_COUNT,
     vector_size: int = DEFAULT_VECTOR_SIZE,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> Dict[str, int]:
     """
     Ensure that the configured Qdrant collection is populated with seed data.
@@ -201,42 +241,70 @@ def ensure_seed_collection(
             else:
                 raise
 
-        logger.info("Uploading seed vectors from %s", seed_path)
+        logger.info("Uploading seed vectors from %s (parallel workers: %d)", seed_path, max_workers)
         _set_seed_status(
             state="in_progress",
-            message="Uploading seed vectors",
+            message=f"Uploading seed vectors ({max_workers} parallel workers)",
             seeded=0,
             total=total_points,
             started_at=started_at,
             finished_at=None,
         )
 
-        batch: list = []
+        # Reset global counter for this upload session
+        global _uploaded_counter
+        _uploaded_counter = 0
+
+        # Prepare all batches first
+        all_batches: List[List[Dict]] = []
+        current_batch: List[Dict] = []
+
         for point in _read_seed_lines(seed_path):
-            batch.append(point)
-            if len(batch) >= batch_size:
-                _upload_points(collection_name, batch)
-                uploaded += len(batch)
-                _set_seed_status(
-                    state="in_progress",
-                    message="Uploading seed vectors",
-                    seeded=uploaded,
-                    total=total_points,
-                    started_at=started_at,
-                    finished_at=None,
-                )
-                batch.clear()
-        if batch:
-            _upload_points(collection_name, batch)
-            uploaded += len(batch)
-            _set_seed_status(
-                state="in_progress",
-                message="Uploading seed vectors",
-                seeded=uploaded,
-                total=total_points,
-                started_at=started_at,
-                finished_at=None,
-            )
+            current_batch.append(point)
+            if len(current_batch) >= batch_size:
+                all_batches.append(current_batch)
+                current_batch = []
+
+        # Add remaining points
+        if current_batch:
+            all_batches.append(current_batch)
+
+        total_batches = len(all_batches)
+        logger.info(f"📦 Prepared {total_batches} batches ({batch_size} vectors/batch)")
+
+        # Parallel upload with ThreadPoolExecutor - chunked submission to avoid memory issues
+        chunk_size = max_workers * 10  # Process 10 batches per worker at a time
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for chunk_start in range(0, total_batches, chunk_size):
+                chunk_end = min(chunk_start + chunk_size, total_batches)
+                chunk_batches = all_batches[chunk_start:chunk_end]
+
+                # Submit chunk of batches
+                futures = {
+                    executor.submit(
+                        _upload_batch_with_progress,
+                        collection_name,
+                        batch,
+                        chunk_start + batch_idx + 1,
+                        total_points,
+                        started_at,
+                    ): (chunk_start + batch_idx)
+                    for batch_idx, batch in enumerate(chunk_batches)
+                }
+
+                # Wait for chunk to complete
+                for future in as_completed(futures):
+                    batch_num = futures[future]
+                    try:
+                        batch_uploaded = future.result()
+                        uploaded += batch_uploaded
+                    except Exception as exc:
+                        logger.error(f"Batch {batch_num + 1} generated an exception: {exc}")
+                        raise
+
+                logger.info(f"🔄 Chunk progress: {chunk_end}/{total_batches} batches processed")
+
+        logger.info(f"✅ All {total_batches} batches uploaded successfully")
 
     except Exception as exc:
         logger.exception("Seed upload failed: %s", exc)

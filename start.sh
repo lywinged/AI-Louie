@@ -10,10 +10,18 @@ DATA_DIR="data"
 FRONTEND_SERVICE="${FRONTEND_SERVICE:-frontend}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-backend}"
 QDRANT_SERVICE="${QDRANT_SERVICE:-qdrant}"
+INFERENCE_SERVICE="${INFERENCE_SERVICE:-inference}"
+PROMETHEUS_SERVICE="${PROMETHEUS_SERVICE:-prometheus}"
+GRAFANA_SERVICE="${GRAFANA_SERVICE:-grafana}"
+JAEGER_SERVICE="${JAEGER_SERVICE:-jaeger}"
 
 FRONTEND_INTERNAL_PORT="${FRONTEND_INTERNAL_PORT:-8501}"
 BACKEND_INTERNAL_PORT="${BACKEND_INTERNAL_PORT:-8888}"
 QDRANT_INTERNAL_PORT="${QDRANT_INTERNAL_PORT:-6333}"
+INFERENCE_INTERNAL_PORT="${INFERENCE_INTERNAL_PORT:-8001}"
+PROMETHEUS_INTERNAL_PORT="${PROMETHEUS_INTERNAL_PORT:-9090}"
+GRAFANA_INTERNAL_PORT="${GRAFANA_INTERNAL_PORT:-3000}"
+JAEGER_INTERNAL_PORT="${JAEGER_INTERNAL_PORT:-16686}"
 
 OPEN_BROWSER="${OPEN_BROWSER:-1}"
 
@@ -98,7 +106,53 @@ else
 fi
 
 # ===========================
-# Step 1: Clean env
+# Step 1: Check and prompt for API key
+# ===========================
+echo_hr
+echo "🔑 Checking OpenAI API Key"
+echo_hr
+
+# Load .env file if it exists
+if [[ -f .env ]]; then
+  # Extract OPENAI_API_KEY from .env (handle commented lines and empty values)
+  EXISTING_KEY=$(grep -E "^OPENAI_API_KEY=" .env | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs)
+fi
+
+# Check if API key is missing or empty
+if [[ -z "$EXISTING_KEY" ]] || [[ "$EXISTING_KEY" == "your-openai-api-key-here" ]]; then
+  echo "⚠️  No OpenAI API key found in .env file"
+  echo
+  echo "Please enter your OpenAI API key (or press Enter to skip):"
+  read -r NEW_API_KEY
+
+  if [[ -n "$NEW_API_KEY" ]]; then
+    # Update or create .env file with the new API key
+    if [[ -f .env ]]; then
+      # Replace existing OPENAI_API_KEY line
+      if grep -q "^OPENAI_API_KEY=" .env; then
+        # Use | as delimiter to avoid issues with / in API keys
+        sed -i.bak "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=$NEW_API_KEY|" .env && rm -f .env.bak
+        echo "   ✓ Updated OPENAI_API_KEY in .env"
+      else
+        # Append if not found
+        echo "OPENAI_API_KEY=$NEW_API_KEY" >> .env
+        echo "   ✓ Added OPENAI_API_KEY to .env"
+      fi
+    else
+      # Create new .env file
+      echo "OPENAI_API_KEY=$NEW_API_KEY" > .env
+      echo "   ✓ Created .env with OPENAI_API_KEY"
+    fi
+  else
+    echo "   ⚠️  Skipping API key setup - services may fail without valid key"
+  fi
+else
+  echo "   ✓ OpenAI API key found in .env"
+fi
+echo
+
+# ===========================
+# Step 2: Clean env
 # ===========================
 unset QDRANT_HOST
 unset QDRANT_SEED_PATH
@@ -112,7 +166,7 @@ echo "   ✓ QDRANT_SEED_PATH unset"
 echo
 
 # ===========================
-# Step 2: Start containers
+# Step 3: Start containers
 # ===========================
 echo "🐳 Starting Docker containers..."
 if ! DC up -d "$@"; then
@@ -123,69 +177,133 @@ echo "✅ Containers started successfully!"
 echo
 
 # ===========================
-# Step 3: Detect mapped ports
+# Step 4: Detect mapped ports
 # ===========================
 FRONTEND_PORT="$(dc_port "$FRONTEND_SERVICE" "$FRONTEND_INTERNAL_PORT")"
 BACKEND_PORT="$(dc_port "$BACKEND_SERVICE" "$BACKEND_INTERNAL_PORT")"
 QDRANT_PORT="$(dc_port "$QDRANT_SERVICE" "$QDRANT_INTERNAL_PORT")"
+INFERENCE_PORT="$(dc_port "$INFERENCE_SERVICE" "$INFERENCE_INTERNAL_PORT")"
+PROMETHEUS_PORT="$(dc_port "$PROMETHEUS_SERVICE" "$PROMETHEUS_INTERNAL_PORT")"
+GRAFANA_PORT="$(dc_port "$GRAFANA_SERVICE" "$GRAFANA_INTERNAL_PORT")"
+JAEGER_PORT="$(dc_port "$JAEGER_SERVICE" "$JAEGER_INTERNAL_PORT")"
 
 # ===========================
-# Step 4: Health checks
+# Step 5: Health checks
 # ===========================
-echo "⏳ Waiting for backend and Qdrant..."
-sleep 3
+echo "Waiting for services to start..."
+sleep 5
 
-echo "🔍 Checking backend API..."
+echo "Checking backend API..."
 if wait_http_ok "http://localhost:${BACKEND_PORT}/health"; then
-  echo "   ✓ Backend API is ready"
+  echo "   Backend API is ready"
 else
-  echo "   ⚠️  Backend not responding"
+  echo "   WARNING: Backend not responding"
 fi
 
-echo "🔍 Checking Qdrant..."
+echo "Checking Qdrant..."
 if wait_http_ok "http://localhost:${QDRANT_PORT}"; then
-  echo "   ✓ Qdrant is ready"
+  echo "   Qdrant is ready"
 else
-  echo "   ⚠️  Qdrant not responding"
+  echo "   WARNING: Qdrant not responding"
+fi
+
+echo "Checking Inference Service..."
+if wait_http_ok "http://localhost:${INFERENCE_PORT}/health"; then
+  echo "   Inference Service is ready"
+else
+  echo "   WARNING: Inference Service not responding"
+fi
+
+echo "Checking Prometheus..."
+if wait_http_ok "http://localhost:${PROMETHEUS_PORT}/-/ready"; then
+  echo "   Prometheus is ready"
+else
+  echo "   WARNING: Prometheus not responding"
+fi
+
+echo "Checking Grafana..."
+if wait_http_ok "http://localhost:${GRAFANA_PORT}/api/health"; then
+  echo "   Grafana is ready"
+else
+  echo "   WARNING: Grafana not responding"
 fi
 
 # ===========================
-# Step 5: Summary
+# Step 6: Optional Smart RAG bandit warm-up (requires backend to be up)
+# ===========================
+if [[ "${WARM_SMART_RAG:-0}" == "1" ]]; then
+  echo "Warming Smart RAG bandit..."
+  # Only warm up if no bandit state file exists
+  if [[ -f "cache/smart_bandit_state.json" ]] || [[ -f "config/default_bandit_state.json" ]]; then
+    echo "   ✅ Bandit weights found - skipping warm-up"
+  elif ! command -v python3 >/dev/null 2>&1; then
+    echo "   WARNING: python3 not found, skipping warm-up"
+  elif [[ ! -f ".venv/bin/activate" ]]; then
+    echo "   WARNING: .venv not found; install requests and create venv first, skipping warm-up"
+  else
+    # Use venv with requests installed
+    echo "   ⚠️  No bandit weights found - running warm-up in background..."
+    (
+      source .venv/bin/activate
+      python scripts/warm_smart_bandit.py --backend "http://localhost:${BACKEND_PORT}"
+    ) || echo "   WARNING: Warm-up failed (check backend health/logs)"
+  fi
+fi
+
+# ===========================
+# Step 7: Summary
 # ===========================
 echo
 echo_hr
 echo "✅ AI Assessment Platform Started!"
 echo_hr
 echo
-echo "📊 Services:"
-echo "   • Frontend:  http://localhost:${FRONTEND_PORT}"
-echo "   • Backend:   http://localhost:${BACKEND_PORT}"
-echo "   • API Docs:  http://localhost:${BACKEND_PORT}/docs"
-echo "   • Qdrant:    http://localhost:${QDRANT_PORT}/dashboard"
+echo "Core Services:"
+echo "   Frontend (Streamlit):    http://localhost:${FRONTEND_PORT}"
+echo "   Backend API:             http://localhost:${BACKEND_PORT}"
+echo "   API Docs (Swagger):      http://localhost:${BACKEND_PORT}/docs"
+echo "   Qdrant Dashboard:        http://localhost:${QDRANT_PORT}/dashboard"
 echo
-echo "📝 Commands:"
+echo "AI Inference:"
+echo "   Inference Service:       http://localhost:${INFERENCE_PORT}"
+echo "   Inference Health:        http://localhost:${INFERENCE_PORT}/health"
+echo
+echo "Monitoring & Observability:"
+echo "   Prometheus:              http://localhost:${PROMETHEUS_PORT}"
+echo "   Prometheus Targets:      http://localhost:${PROMETHEUS_PORT}/targets"
+echo "   Prometheus Alerts:       http://localhost:${PROMETHEUS_PORT}/alerts"
+echo "   Grafana Dashboards:      http://localhost:${GRAFANA_PORT} (admin/admin)"
+echo "   Jaeger Tracing UI:       http://localhost:${JAEGER_PORT}"
+echo
+echo "Commands:"
 if command -v docker-compose >/dev/null 2>&1; then
-  echo "   • Logs:      docker-compose logs -f"
-  echo "   • Stop:      docker-compose down"
-  echo "   • Restart:   docker-compose restart"
-  echo "   • Status:    docker-compose ps"
+  echo "   Logs:      docker-compose logs -f"
+  echo "   Stop:      docker-compose down"
+  echo "   Restart:   docker-compose restart"
+  echo "   Status:    docker-compose ps"
 else
-  echo "   • Logs:      docker compose logs -f"
-  echo "   • Stop:      docker compose down"
-  echo "   • Restart:   docker compose restart"
-  echo "   • Status:    docker compose ps"
+  echo "   Logs:      docker compose logs -f"
+  echo "   Stop:      docker compose down"
+  echo "   Restart:   docker compose restart"
+  echo "   Status:    docker compose ps"
 fi
 echo
 
 # ===========================
-# Step 6: Open UI
+# Step 8: Open UI
 # ===========================
-URL="http://localhost:${FRONTEND_PORT}"
-echo "🌐 Opening frontend: $URL"
+FRONTEND_URL="http://localhost:${FRONTEND_PORT}"
+GRAFANA_URL="http://localhost:${GRAFANA_PORT}/d/system-overview/ai-louie-system-overview?orgId=1&refresh=30s"
+
+echo "Opening frontend: $FRONTEND_URL"
+open_url "$FRONTEND_URL"
 sleep 1
-open_url "$URL"
+
+echo "Opening Grafana: $GRAFANA_URL"
+open_url "$GRAFANA_URL"
 
 echo
-echo "🎉 Ready! If the browser didn’t open, visit:"
-echo "   $URL"
+echo "Ready! If the browser didn't open, visit:"
+echo "   Frontend: $FRONTEND_URL"
+echo "   Grafana:  $GRAFANA_URL"
 echo_hr

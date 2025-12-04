@@ -13,13 +13,13 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
     AZURE_OPENAI_KEY: str = os.getenv("AZURE_OPENAI_KEY", "")
     AZURE_OPENAI_VERSION: str = os.getenv("AZURE_OPENAI_VERSION", "2024-08-01-preview")
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "Gpt4o")
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "gpt-4o-mini")
 
     # Generic OpenAI-compatible settings (e.g. custom gateways, OpenAI SaaS)
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
-    # Use Gpt4o as default model
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "Gpt4o")
+    # Use gpt-4o-mini as default model
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     # Database
     DATABASE_URL: str = os.getenv(
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     CHAT_TIMEOUT: int = 30
 
     # Cost Configuration (USD per 1K tokens)
-    # Gpt4o pricing
+    # gpt-4o-mini pricing
     PROMPT_COST_PER_1K: float = 0.005  # $0.005 per 1K prompt tokens
     COMPLETION_COST_PER_1K: float = 0.015  # $0.015 per 1K completion tokens
 
@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     TARGET_RETRIEVAL_MS: int = 300  # Target <300ms
     METADATA_TITLE_MATCH_LIMIT: int = int(os.getenv("METADATA_TITLE_MATCH_LIMIT", "5"))
     RAG_VECTOR_SIZE: int = int(os.getenv("RAG_VECTOR_SIZE", "1024"))
+    RERANK_SCORE_THRESHOLD: float = float(os.getenv("RERANK_SCORE_THRESHOLD", "-1.0"))  # Filter out results below this score
 
     # ONNX Inference
     USE_ONNX_INFERENCE: bool = os.getenv("USE_ONNX_INFERENCE", "true").lower() == "true"

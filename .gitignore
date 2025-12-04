@@ -72,13 +72,24 @@ logs/
 # Model files (too large for git)
 model/
 
+# Large BGE models (download on-demand via scripts/download_models.sh)
+models/bge-m3-embed-int8/*.onnx
+models/bge-m3-embed-int8/*.bin
+models/bge-reranker-int8/*.onnx
+models/bge-reranker-int8/*.bin
+
 # OS
 .DS_Store
 Thumbs.db
 
-# Keep model README files
+# Keep model README files and config
 !models/README.md
 !models/*/README.md
+!models/*/config.json
+!models/*/tokenizer.json
+!models/*/tokenizer_config.json
+!models/*/special_tokens_map.json
+!models/*/vocab.txt
 
 # Qdrant data (local development)
 qdrant_data/
@@ -104,3 +115,4 @@ dmypy.json
 # Evaluation results (optional - uncomment if you want to keep them out)
 # eval/*.json
 # eval/*.txt
+cache/

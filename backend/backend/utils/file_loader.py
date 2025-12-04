@@ -5,8 +5,12 @@ Helper utilities to load documents from the data directory for ingestion.
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
+import csv
+import io
 
 from pypdf import PdfReader
+from docx import Document as DocxDocument
+import pandas as pd
 
 
 @dataclass
@@ -103,6 +107,63 @@ def load_document_from_path(path: str) -> List[LoadedDocument]:
                 metadata={
                     "filename": file_path.name,
                     "pages": str(len(reader.pages)),
+                },
+            )
+        ]
+
+    if file_path.suffix.lower() == ".docx":
+        doc = DocxDocument(str(file_path))
+        paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
+        text = "\n".join(paragraphs)
+        return [
+            LoadedDocument(
+                title=file_path.stem,
+                content=text,
+                source=file_path.name,
+                metadata={"filename": file_path.name, "doc_type": "docx"},
+            )
+        ]
+
+    if file_path.suffix.lower() in {".csv"}:
+        with file_path.open("r", encoding="utf-8", errors="ignore") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+        # Convert to a simple tab-separated text for ingestion
+        text_rows = ["\t".join(row) for row in rows]
+        text = "\n".join(text_rows)
+        return [
+            LoadedDocument(
+                title=file_path.stem,
+                content=text,
+                source=file_path.name,
+                metadata={
+                    "filename": file_path.name,
+                    "doc_type": "csv",
+                    "rows": str(len(rows)),
+                },
+            )
+        ]
+
+    if file_path.suffix.lower() in {".xls", ".xlsx"}:
+        # Load all sheets and concatenate as text
+        sheets = pd.read_excel(file_path, sheet_name=None)
+        parts: List[str] = []
+        for sheet_name, df in sheets.items():
+            buffer = io.StringIO()
+            df.to_csv(buffer, index=False)
+            parts.append(f"Sheet: {sheet_name}\n{buffer.getvalue()}")
+
+        text = "\n\n".join(parts)
+        return [
+            LoadedDocument(
+                title=file_path.stem,
+                content=text,
+                source=file_path.name,
+                metadata={
+                    "filename": file_path.name,
+                    "doc_type": "excel",
+                    "sheets": str(len(sheets)),
+                    "sheet_names": ", ".join(list(sheets.keys())[:5]),
                 },
             )
         ]
