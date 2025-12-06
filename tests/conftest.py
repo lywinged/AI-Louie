@@ -239,6 +239,11 @@ def _get_current_embed_path():
     return _EMBED_MODEL.resolved_model_path
 
 
+def _set_embedding_model_path(path: str):
+    """Stub for set_embedding_model_path."""
+    _EMBED_MODEL.resolved_model_path = path
+
+
 def _has_cuda_available_stub():
     return False
 
@@ -250,6 +255,7 @@ onnx_service_module.switch_to_fallback_reranker = _switch_to_fallback_reranker
 onnx_service_module.switch_to_fallback_mode = _switch_to_fallback_mode
 onnx_service_module.switch_to_primary_mode = _switch_to_primary_mode
 onnx_service_module.set_reranker_model_path = _set_reranker_model_path
+onnx_service_module.set_embedding_model_path = _set_embedding_model_path
 onnx_service_module.get_current_reranker_path = _get_current_reranker_path
 onnx_service_module.get_current_embed_path = _get_current_embed_path
 onnx_service_module._has_cuda_available = _has_cuda_available_stub
