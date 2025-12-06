@@ -990,10 +990,14 @@ If the graph shows relationships between entities, explain those connections.
             # Calculate cost using TokenCounter
             from backend.services.token_counter import get_token_counter, TokenUsage
             token_counter = get_token_counter()
+            # Use the actual model name from OpenAI response (may include version suffix)
+            # but fall back to self.generation_model if not available
+            actual_model = getattr(response, 'model', self.generation_model)
+            logger.info(f"Token cost calculation - using model: {actual_model} (response.model: {getattr(response, 'model', 'N/A')})")
             usage_obj = TokenUsage(
-                model=self.generation_model,
+                model=actual_model,
                 prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
+                completion_tokens=response.usage.completion_tokens,  # FIXED: was using prompt_tokens twice
                 total_tokens=response.usage.total_tokens,
                 timestamp=datetime.now(),
             )
