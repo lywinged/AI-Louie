@@ -134,6 +134,7 @@ class IncrementalGraphRAG:
         top_k: int = 5,
         max_hops: int = 2,
         enable_vector_retrieval: bool = True,
+        progress_callback: Optional[Callable[[int, str, Dict], None]] = None,
     ) -> Dict[str, Any]:
         """
         Answer a question using incremental Graph RAG.
@@ -143,6 +144,8 @@ class IncrementalGraphRAG:
             top_k: Number of chunks for vector retrieval
             max_hops: Max graph traversal distance
             enable_vector_retrieval: Whether to combine with vector search
+            progress_callback: Optional callback(step: int, message: str, metadata: dict)
+                              for real-time progress updates
 
         Returns:
             Answer with graph context, timings, and statistics
@@ -158,6 +161,9 @@ class IncrementalGraphRAG:
         logger.info(f"Graph RAG settings: max_jit_chunks={self.max_jit_chunks}, batch_size={self.jit_batch_size}, batch_timeout={self.jit_batch_timeout}s")
 
         # Step 1: Extract entities from query
+        if progress_callback:
+            progress_callback(1, "🔍 Extracting entities from query...", {})
+
         t0 = time.time()
         query_entities, entity_extraction_tokens, entity_extraction_cost = await self.extract_query_entities(question)
         timings['entity_extraction_ms'] = (time.time() - t0) * 1000
@@ -170,6 +176,10 @@ class IncrementalGraphRAG:
         logger.info(f"Extracted {len(query_entities)} query entities: {query_entities}")
 
         # Step 2: Check graph coverage
+        if progress_callback:
+            progress_callback(2, f"🕸️ Checking graph for {len(query_entities)} entities...",
+                            {"entities": len(query_entities)})
+
         t0 = time.time()
         existing_entities, missing_entities = self.check_entities_in_graph(query_entities)
         timings['graph_check_ms'] = (time.time() - t0) * 1000
@@ -178,8 +188,12 @@ class IncrementalGraphRAG:
         # Step 3: JIT build missing entities
         jit_stats = None
         if missing_entities:
+            if progress_callback:
+                progress_callback(3, f"⚡ Building {len(missing_entities)} missing entities...",
+                                {"missing": len(missing_entities), "existing": len(existing_entities)})
+
             t0 = time.time()
-            jit_stats = await self.jit_build_entities(missing_entities, question)
+            jit_stats = await self.jit_build_entities(missing_entities, question, progress_callback=progress_callback)
             timings['jit_build_ms'] = (time.time() - t0) * 1000
             # Accumulate tokens from JIT building
             if jit_stats and jit_stats.get('token_usage'):
@@ -193,9 +207,15 @@ class IncrementalGraphRAG:
                        f"from {jit_stats['chunks_processed']} chunks")
         else:
             timings['jit_build_ms'] = 0
+            if progress_callback:
+                progress_callback(3, "✅ All entities exist in graph cache", {})
             logger.info("All entities exist in graph - using cache")
 
         # Step 4: Query graph for relationships
+        if progress_callback:
+            progress_callback(4, f"🔗 Querying graph (max {max_hops} hops)...",
+                            {"max_hops": max_hops})
+
         t0 = time.time()
         graph_context = self.query_subgraph(query_entities, max_hops=max_hops)
         timings['graph_query_ms'] = (time.time() - t0) * 1000
@@ -205,6 +225,10 @@ class IncrementalGraphRAG:
         # Step 5: Optional vector retrieval for additional context
         vector_chunks = []
         if enable_vector_retrieval:
+            if progress_callback:
+                progress_callback(5, f"🔎 Vector search (top {top_k} chunks)...",
+                                {"top_k": top_k})
+
             t0 = time.time()
             vector_chunks = await self.vector_retrieve(question, top_k=top_k)
             timings['vector_retrieval_ms'] = (time.time() - t0) * 1000
@@ -226,6 +250,9 @@ class IncrementalGraphRAG:
             }
 
         # Step 6: Generate answer with LLM
+        if progress_callback:
+            progress_callback(6, "🧠 Generating final answer...", {})
+
         t0 = time.time()
         answer_result = await self.generate_answer(
             question=question,
@@ -377,10 +404,14 @@ Keep it concise - maximum 5 entities.
     async def jit_build_entities(
         self,
         entity_names: List[str],
-        context_query: str
+        context_query: str,
+        progress_callback: Optional[Callable[[int, str, Dict], None]] = None,
     ) -> Dict[str, Any]:
         """
         Just-In-Time build: Extract entities and relationships for missing entities.
+
+        Args:
+            progress_callback: Optional callback for batch progress updates
 
         Process:
         1. Search Qdrant for chunks mentioning these entities
@@ -473,9 +504,15 @@ Keep it concise - maximum 5 entities.
             # **OPTIMIZATION: Batch extract entities in parallel**
             batch_size = max(1, self.jit_batch_size)
             batches = [unprocessed_chunks[i:i+batch_size] for i in range(0, len(unprocessed_chunks), batch_size)]
+            total_batches = len(batches)
 
             # Run batch extractions in parallel
-            async def _run_batch(batch):
+            async def _run_batch(batch_idx, batch):
+                # Send progress update for this batch
+                if progress_callback:
+                    progress_callback(3, f"⚡ Building entities (batch {batch_idx + 1}/{total_batches})...",
+                                    {"batch": batch_idx + 1, "total_batches": total_batches})
+
                 logger.info(f"Batch extraction start: size={len(batch)} timeout={self.jit_batch_timeout}s")
                 try:
                     res = await asyncio.wait_for(
@@ -488,7 +525,7 @@ Keep it concise - maximum 5 entities.
                     logger.warning(f"Batch extraction timeout after {self.jit_batch_timeout}s (size={len(batch)})")
                     return []
 
-            extraction_tasks = [_run_batch(batch) for batch in batches]
+            extraction_tasks = [_run_batch(idx, batch) for idx, batch in enumerate(batches)]
             batch_results = await asyncio.gather(*extraction_tasks, return_exceptions=True)
 
             # Merge results from all batches

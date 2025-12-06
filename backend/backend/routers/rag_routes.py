@@ -2449,3 +2449,92 @@ async def submit_feedback(feedback: UserFeedback) -> FeedbackResponse:
     except Exception as exc:
         logger.exception(f"Feedback submission failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/ask-graph-stream")
+async def ask_question_graph_stream(request: RAGRequest):
+    """
+    Graph RAG endpoint with real-time progress updates via Server-Sent Events (SSE).
+    
+    Streams progress events for each step of Graph RAG execution:
+    - Step 1: Entity extraction
+    - Step 2: Graph check
+    - Step 3: JIT building (with batch progress)
+    - Step 4: Graph query
+    - Step 5: Vector retrieval
+    - Step 6: Answer generation
+    
+    Returns:
+        StreamingResponse with SSE events (event: progress/result/done)
+    """
+    async def event_generator():
+        try:
+            from backend.services.graph_rag_incremental import IncrementalGraphRAG
+            from backend.services.rag_pipeline import _get_openai_client
+            
+            openai_client = _get_openai_client()
+            qdrant_client = get_qdrant_client()
+            
+            # Progress callback that yields SSE events
+            async def progress_callback(step: int, message: str, metadata: Dict):
+                event_data = {
+                    "step": step,
+                    "message": message,
+                    "metadata": metadata
+                }
+                yield f"event: progress\ndata: {json.dumps(event_data)}\n\n"
+            
+            graph_rag = IncrementalGraphRAG(
+                openai_client=openai_client,
+                qdrant_client=qdrant_client,
+                collection_name=COLLECTION_NAME,
+                extraction_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+                generation_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+                max_jit_chunks=int(os.getenv("GRAPH_MAX_JIT_CHUNKS", "50"))
+            )
+            
+            # Collect progress events
+            progress_events = []
+            
+            def sync_progress_callback(step, msg, meta):
+                """Synchronous callback that collects events"""
+                progress_events.append((step, msg, meta))
+            
+            # Execute Graph RAG with progress callback
+            result = await graph_rag.answer_question(
+                question=request.question,
+                top_k=request.top_k or 20,
+                max_hops=2,
+                enable_vector_retrieval=True,
+                progress_callback=sync_progress_callback
+            )
+            
+            # Yield all collected progress events
+            for step, msg, meta in progress_events:
+                event_data = {
+                    "step": step,
+                    "message": msg,
+                    "metadata": meta
+                }
+                yield f"event: progress\ndata: {json.dumps(event_data)}\n\n"
+            
+            # Yield final result
+            result_data = {
+                "answer": result['answer'],
+                "token_usage": result.get('token_usage'),
+                "token_cost_usd": result.get('token_cost_usd'),
+                "timings": result.get('timings'),
+                "graph_context": result.get('graph_context'),
+                "jit_stats": result.get('jit_stats')
+            }
+            yield f"event: result\ndata: {json.dumps(result_data)}\n\n"
+            
+            # Yield done event
+            yield f"event: done\ndata: {{}}\n\n"
+            
+        except Exception as exc:
+            logger.exception(f"Graph RAG stream failed: {exc}")
+            error_data = {"error": str(exc)}
+            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+    
+    return EventSourceResponse(event_generator())
