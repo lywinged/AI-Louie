@@ -87,7 +87,7 @@ def test_rag_config_returns_model_info(monkeypatch):
     assert "models" in config
     assert "limits" in config
     assert "current_mode" in config
-    assert "mode_options" in config
+    assert "reranker_options" in config
 
     # Check models section
     assert "embedding_current" in config["models"]
