@@ -58,7 +58,7 @@ evidently==0.7.17  # Updated to latest version for pydantic v2 compatibility
 
 # RAG Evaluation
 ragas==0.1.4
-datasets==2.16.1
+datasets==3.2.0  # Updated for fsspec 2024.x compatibility with evidently 0.7.17
 
 # SSE Support
 sse-starlette==1.8.2
