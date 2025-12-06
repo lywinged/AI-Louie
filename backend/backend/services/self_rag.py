@@ -2,6 +2,7 @@
 Self-RAG: Iterative retrieval with self-reflection and confidence thresholds
 
 Implements iterative document retrieval with LLM self-assessment until confidence threshold is met.
+Integrated with AI Governance tracking for compliance and audit trails.
 """
 import json
 import os
@@ -18,6 +19,11 @@ from backend.services.rag_pipeline import (
     _get_openai_client,
 )
 from backend.services.enhanced_rag_pipeline import answer_question_hybrid
+from backend.services.governance_tracker import (
+    get_governance_tracker,
+    RiskTier,
+    GovernanceCriteria,
+)
 from backend.utils.openai import sanitize_messages
 
 logger = structlog.get_logger(__name__)
@@ -71,6 +77,35 @@ class SelfRAG:
         """
         tic_total = time.perf_counter()
 
+        # Initialize AI Governance tracking
+        governance_tracker = get_governance_tracker()
+        gov_context = governance_tracker.start_operation(
+            operation_type="self_rag",
+            metadata={
+                "question_length": len(question),
+                "top_k": top_k,
+                "use_hybrid": use_hybrid,
+                "max_iterations": self.max_iterations,
+                "confidence_threshold": self.confidence_threshold
+            }
+        )
+
+        # G7: Observability - Log operation start
+        gov_context.add_checkpoint(
+            GovernanceCriteria.G7_OBSERVABILITY,
+            "passed",
+            f"Self-RAG operation started with {self.max_iterations} max iterations",
+            metadata={"trace_id": gov_context.trace_id}
+        )
+
+        # G2: Risk Tiering - Self-RAG involves multiple LLM calls and iterations
+        gov_context.add_checkpoint(
+            GovernanceCriteria.G2_RISK_TIERING,
+            "passed",
+            f"Risk tier: {gov_context.risk_tier.value} - Iterative RAG with confidence assessment",
+            metadata={"risk_level": "R1"}  # External customer-facing
+        )
+
         iteration = 0
         all_chunks: List[RetrievedChunk] = []
         conversation_history: List[Dict[str, Any]] = []
@@ -88,6 +123,18 @@ class SelfRAG:
         while iteration < self.max_iterations:
             iteration_start = time.perf_counter()
             logger.info(f"Self-RAG iteration {iteration + 1}/{self.max_iterations}", question=question[:50])
+
+            # G7: Observability - Track each iteration
+            gov_context.add_checkpoint(
+                GovernanceCriteria.G7_OBSERVABILITY,
+                "passed",
+                f"Starting iteration {iteration + 1}/{self.max_iterations}",
+                metadata={
+                    "iteration": iteration + 1,
+                    "total_chunks_so_far": len(all_chunks),
+                    "current_best_confidence": best_confidence
+                }
+            )
 
             # Retrieve documents (first iteration or follow-up)
             if iteration == 0:
@@ -281,6 +328,36 @@ class SelfRAG:
         # Build final response
         total_time_ms = (time.perf_counter() - tic_total) * 1000
 
+        # G8: Evaluation System - Record final confidence and convergence
+        gov_context.add_checkpoint(
+            GovernanceCriteria.G8_EVALUATION_SYSTEM,
+            "passed",
+            f"Self-RAG completed with confidence {best_confidence:.2f}",
+            metadata={
+                "final_confidence": best_confidence,
+                "converged": best_confidence >= self.confidence_threshold,
+                "total_iterations": len(iterations_metadata),
+                "total_chunks": len(all_chunks)
+            }
+        )
+
+        # G11: Reliability - Check if system achieved desired quality
+        reliability_status = "passed" if best_confidence >= self.confidence_threshold else "warning"
+        reliability_message = (
+            f"Converged at confidence {best_confidence:.2f}"
+            if best_confidence >= self.confidence_threshold
+            else f"Did not converge - final confidence {best_confidence:.2f} < threshold {self.confidence_threshold}"
+        )
+        gov_context.add_checkpoint(
+            GovernanceCriteria.G11_RELIABILITY,
+            reliability_status,
+            reliability_message,
+            metadata={"iterations_used": len(iterations_metadata)}
+        )
+
+        # Complete governance tracking
+        completed_gov_context = governance_tracker.complete_operation(gov_context.trace_id)
+
         citations = [
             Citation(
                 source=chunk.source,
@@ -329,13 +406,28 @@ class SelfRAG:
                 aggregated_timings['score_threshold'] = first_timing.get('score_threshold')
                 aggregated_timings['reranker_model'] = first_timing.get('reranker_model')
 
+        # Add governance audit trail to timings
+        governance_summary = None
+        if completed_gov_context:
+            governance_summary = {
+                'trace_id': completed_gov_context.trace_id,
+                'risk_tier': completed_gov_context.risk_tier.value,
+                'total_checkpoints': len(completed_gov_context.checkpoints),
+                'passed_checkpoints': sum(1 for cp in completed_gov_context.checkpoints if cp.status == "passed"),
+                'warning_checkpoints': sum(1 for cp in completed_gov_context.checkpoints if cp.status == "warning"),
+                'failed_checkpoints': sum(1 for cp in completed_gov_context.checkpoints if cp.status == "failed"),
+                'criteria_checked': [cp.criteria.value for cp in completed_gov_context.checkpoints]
+            }
+
         timings = {
             'iterations': iterations_metadata,
             'total_iterations': len(iterations_metadata),
             'converged': best_confidence >= self.confidence_threshold,
             'end_to_end_ms': total_time_ms,
             # Add aggregated bottom-level timings
-            **aggregated_timings
+            **aggregated_timings,
+            # Add AI Governance tracking
+            'governance': governance_summary
         } if include_timings else None
 
         # Aggregate token usage from all iterations
