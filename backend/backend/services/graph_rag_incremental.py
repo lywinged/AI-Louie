@@ -146,13 +146,23 @@ class IncrementalGraphRAG:
         start_time = time.time()
         timings = {}
 
+        # Initialize token tracking for all LLM calls
+        total_tokens = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+        total_cost_usd = 0.0
+
         logger.info(f"Graph RAG Question: {question}")
         logger.info(f"Graph RAG settings: max_jit_chunks={self.max_jit_chunks}, batch_size={self.jit_batch_size}, batch_timeout={self.jit_batch_timeout}s")
 
         # Step 1: Extract entities from query
         t0 = time.time()
-        query_entities = await self.extract_query_entities(question)
+        query_entities, entity_extraction_tokens, entity_extraction_cost = await self.extract_query_entities(question)
         timings['entity_extraction_ms'] = (time.time() - t0) * 1000
+        # Accumulate tokens from entity extraction
+        if entity_extraction_tokens:
+            total_tokens['prompt_tokens'] += entity_extraction_tokens.get('prompt_tokens', 0)
+            total_tokens['completion_tokens'] += entity_extraction_tokens.get('completion_tokens', 0)
+            total_tokens['total_tokens'] += entity_extraction_tokens.get('total_tokens', 0)
+            total_cost_usd += entity_extraction_cost
         logger.info(f"Extracted {len(query_entities)} query entities: {query_entities}")
 
         # Step 2: Check graph coverage
@@ -167,6 +177,13 @@ class IncrementalGraphRAG:
             t0 = time.time()
             jit_stats = await self.jit_build_entities(missing_entities, question)
             timings['jit_build_ms'] = (time.time() - t0) * 1000
+            # Accumulate tokens from JIT building
+            if jit_stats and jit_stats.get('token_usage'):
+                jit_tokens = jit_stats['token_usage']
+                total_tokens['prompt_tokens'] += jit_tokens.get('prompt_tokens', 0)
+                total_tokens['completion_tokens'] += jit_tokens.get('completion_tokens', 0)
+                total_tokens['total_tokens'] += jit_tokens.get('total_tokens', 0)
+                total_cost_usd += jit_stats.get('token_cost_usd', 0.0)
             logger.info(f"JIT built {jit_stats['entities_added']} entities, "
                        f"{jit_stats['relationships_added']} relationships "
                        f"from {jit_stats['chunks_processed']} chunks")
@@ -212,6 +229,13 @@ class IncrementalGraphRAG:
             vector_chunks=vector_chunks
         )
         timings['answer_generation_ms'] = (time.time() - t0) * 1000
+        # Accumulate tokens from answer generation
+        if answer_result.get('token_usage'):
+            answer_tokens = answer_result['token_usage']
+            total_tokens['prompt_tokens'] += answer_tokens.get('prompt_tokens', 0)
+            total_tokens['completion_tokens'] += answer_tokens.get('completion_tokens', 0)
+            total_tokens['total_tokens'] += answer_tokens.get('total_tokens', 0)
+            total_cost_usd += answer_result.get('token_cost_usd', 0.0)
 
         # Total time
         total_time_ms = (time.time() - start_time) * 1000
@@ -224,7 +248,7 @@ class IncrementalGraphRAG:
         timings['rerank_ms'] = timings.get('graph_query_ms', 0.0)  # Graph query is like reranking
         timings['llm_ms'] = timings.get('answer_generation_ms', 0.0)
 
-        # Build response
+        # Build response with accumulated tokens from ALL LLM calls
         response = {
             'answer': answer_result['answer'],
             'graph_context': {
@@ -236,8 +260,8 @@ class IncrementalGraphRAG:
             'jit_stats': jit_stats,
             'graph_stats': asdict(self.stats),
             'timings': {**timings, 'graph_context': graph_context},
-            'token_usage': answer_result.get('token_usage', {}),
-            'token_cost_usd': answer_result.get('token_cost_usd', 0.0),
+            'token_usage': total_tokens,  # FIXED: Use accumulated tokens from ALL LLM calls
+            'token_cost_usd': total_cost_usd,  # FIXED: Use accumulated cost from ALL LLM calls
             'query_entities': query_entities,
             'cache_hit': len(missing_entities) == 0,
         }
@@ -247,11 +271,14 @@ class IncrementalGraphRAG:
 
         return response
 
-    async def extract_query_entities(self, question: str) -> List[str]:
+    async def extract_query_entities(self, question: str) -> Tuple[List[str], Dict[str, int], float]:
         """
         Extract key entities from the user's question.
 
         Uses LLM to identify entities that should be searched in the graph.
+
+        Returns:
+            Tuple of (entities, token_usage, token_cost_usd)
         """
         prompt = f"""Extract key entities from this question that would be useful for graph-based knowledge retrieval.
 
@@ -295,7 +322,25 @@ Keep it concise - maximum 5 entities.
             # Normalize: lowercase, strip whitespace
             entities = [e.lower().strip() for e in entities if e.strip()]
 
-            return entities[:5]  # Max 5 entities
+            # Calculate token usage and cost
+            from backend.services.token_counter import get_token_counter, TokenUsage
+            token_counter = get_token_counter()
+            actual_model = getattr(response, 'model', self.extraction_model)
+            token_usage = {
+                'prompt_tokens': response.usage.prompt_tokens,
+                'completion_tokens': response.usage.completion_tokens,
+                'total_tokens': response.usage.total_tokens,
+            }
+            usage_obj = TokenUsage(
+                model=actual_model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                timestamp=datetime.now(),
+            )
+            cost_usd = token_counter.estimate_cost(usage_obj)
+
+            return entities[:5], token_usage, cost_usd  # Max 5 entities
 
         except Exception as e:
             logger.error(f"Entity extraction failed: {e}")
@@ -305,7 +350,7 @@ Keep it concise - maximum 5 entities.
             # Remove common stop words
             stop_words = {'what', 'how', 'when', 'where', 'who', 'which', 'does', 'are', 'the', 'and', 'for'}
             entities = [w for w in words if w not in stop_words]
-            return entities[:5]
+            return entities[:5], {}, 0.0
 
     def check_entities_in_graph(self, entity_names: List[str]) -> Tuple[List[str], List[str]]:
         """
@@ -356,6 +401,10 @@ Keep it concise - maximum 5 entities.
         entities_added = 0
         relationships_added = 0
         chunks_processed = 0
+
+        # Track token usage from JIT LLM calls
+        jit_tokens = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+        jit_cost_usd = 0.0
 
         # Search Qdrant for relevant chunks
         search_query = f"{context_query} {' '.join(entity_names)}"
@@ -527,6 +576,8 @@ Keep it concise - maximum 5 entities.
                 'entities_added': entities_added,
                 'relationships_added': relationships_added,
                 'chunks_processed': chunks_processed,
+                'token_usage': jit_tokens,  # Add token usage tracking
+                'token_cost_usd': jit_cost_usd,  # Add cost tracking
             }
             # Memoize result for this entity set
             self.jit_cache[cache_key] = result
@@ -539,6 +590,8 @@ Keep it concise - maximum 5 entities.
                 'entities_added': 0,
                 'relationships_added': 0,
                 'chunks_processed': 0,
+                'token_usage': {},
+                'token_cost_usd': 0.0,
                 'error': str(e)
             }
 

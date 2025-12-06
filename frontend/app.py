@@ -1539,37 +1539,36 @@ if seed_state in ["checking", "counting", "initializing", "in_progress"]:
     total = seed_status.get("total", 1)
     message = seed_status.get("message", "")
 
-    # Different display for counting vs uploading
+    # Unified warm-up progress display (all stages with consistent yellow warning)
+    st.warning(f"🔥 **Smart RAG Warm-up in Progress**")
+
+    # Determine progress and stage message based on state
     if seed_state == "counting":
-        st.warning(f"📊 **Preparing Vector Database**")
-        st.info(f"**{message}**")
-        st.markdown(f"""
-        This is a one-time setup that happens on first startup.
+        progress_pct = 50  # Indeterminate for counting
+        stage_message = "**Step 1/2: Counting vectors in seed file**"
+        detail_message = f"{message}\n\n⏳ Please wait ~10-15 seconds while counting..."
+    elif seed_state == "initializing":
+        progress_pct = 75  # Indeterminate for batch prep
+        stage_message = "**Step 1/2: Preparing batches for upload**"
+        detail_message = f"{message}\n\n⏳ Please wait ~30 seconds while preparing batches..."
+    else:  # in_progress or checking
+        progress_pct = (seeded / total * 100) if total > 0 else 5
+        stage_message = "**Step 2/2: Uploading vectors to Qdrant**"
+        detail_message = f"Progress: **{seeded:,} / {total:,}** vectors ({progress_pct:.1f}%)"
 
-        ⏳ Please wait ~10-15 seconds while the system counts vectors in the seed file.
+    # Show progress bar
+    st.progress(progress_pct / 100.0 if progress_pct > 0 else 0.01)
 
-        You can use other modes (Code, Trip Planning, Stats) in the meantime.
-        """)
-        # Show indeterminate progress for counting
-        st.progress(0.5)
-    else:
-        # Normal seeding progress
-        progress_pct = (seeded / total * 100) if total > 0 else 0
+    # Show stage details
+    st.markdown(f"""
+    {stage_message}
 
-        st.error(f"🔄 **System Initializing - Please Wait**")
+    {detail_message}
 
-        # Use progress bar for smoother visual feedback
-        st.progress(progress_pct / 100.0 if progress_pct > 0 else 0.01)
+    This is a one-time setup that happens on first startup.
 
-        st.markdown(f"""
-        **Qdrant vector database is being seeded with document embeddings...**
-
-        Progress: **{seeded:,} / {total:,}** vectors ({progress_pct:.1f}%)
-
-        ⏳ Please wait for initialization to complete before using RAG mode.
-
-        You can use other modes (Code, Trip Planning, Stats) in the meantime.
-        """)
+    You can use other modes (Code, Trip Planning, Stats) in the meantime.
+    """)
 
     # Store that seed is NOT ready
     st.session_state.seed_is_ready = False
@@ -1579,11 +1578,70 @@ if seed_state in ["checking", "counting", "initializing", "in_progress"]:
     st.rerun()
 
 elif seed_state == "completed":
-    # Seed is ready
-    if not st.session_state.seed_ready_notified:
-        st.success("✅ Qdrant vector database is ready!")
-        st.session_state.seed_ready_notified = True
+    # Seed is ready, now check warm-up status
     st.session_state.seed_is_ready = True
+
+    # Check if warm-up is also complete
+    if "warmup_ready_notified" not in st.session_state:
+        st.session_state.warmup_ready_notified = False
+
+    if not st.session_state.warmup_ready_notified:
+        # Check warm-up status
+        try:
+            warmup_resp = requests.get(f"{BACKEND_URL}/api/rag/smart-status", timeout=3)
+            if warmup_resp.ok:
+                warmup_status = warmup_resp.json()
+                warmup_enabled = warmup_status.get("enabled", False)
+                warmup_done = warmup_status.get("done", False)
+                warmup_total = warmup_status.get("total", 0)
+                warmup_completed = warmup_status.get("completed", 0)
+                warmup_error = warmup_status.get("last_error")
+
+                if not warmup_enabled:
+                    # Warm-up disabled, mark as ready
+                    st.success("✅ Qdrant vector database is ready!")
+                    st.info("ℹ️ Smart RAG warm-up disabled (WARM_SMART_RAG=0)")
+                    st.session_state.warmup_ready_notified = True
+                    st.session_state.seed_ready_notified = True
+                elif warmup_error:
+                    # Warm-up failed but continue
+                    st.success("✅ Qdrant vector database is ready!")
+                    st.warning(f"⚠️ Smart RAG warm-up failed: {warmup_error}")
+                    st.session_state.warmup_ready_notified = True
+                    st.session_state.seed_ready_notified = True
+                elif not warmup_done:
+                    # Warm-up in progress - BLOCK here
+                    if warmup_total > 0:
+                        progress = warmup_completed / warmup_total * 100
+                        st.warning(f"🔥 **Smart RAG Warm-up in Progress**")
+                        st.progress(progress / 100.0)
+                        st.markdown(f"""
+                        **Warming up RAG models for faster queries...**
+
+                        Progress: **{warmup_completed} / {warmup_total}** queries ({progress:.0f}%)
+
+                        ⏳ Please wait ~30-60 seconds for warm-up to complete.
+
+                        This is a one-time process that happens after Qdrant seeding.
+                        """)
+                    else:
+                        st.info("🔥 Warming up Smart RAG models...")
+
+                    # Auto-refresh to check progress
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    # Warm-up complete!
+                    st.success("✅ System fully initialized!")
+                    st.success(f"🔥 Smart RAG models warmed up ({warmup_total} queries)")
+                    st.session_state.warmup_ready_notified = True
+                    st.session_state.seed_ready_notified = True
+        except Exception as e:
+            # Can't check warm-up status, just notify seed ready
+            st.success("✅ Qdrant vector database is ready!")
+            st.warning(f"⚠️ Could not check warm-up status: {e}")
+            st.session_state.warmup_ready_notified = True
+            st.session_state.seed_ready_notified = True
 
 elif seed_state == "error":
     st.error(f"❌ Qdrant seeding failed: {seed_status.get('message', 'Unknown error')}")
@@ -2501,91 +2559,13 @@ if current_mode == "rag":
     render_rag_controls(rag_controls_container)
     st.markdown("---")
 
-    # Warm-up RAG models on first access
-    if "rag_warmed_up" not in st.session_state:
-        st.session_state.rag_warmed_up = False
-
-    if not st.session_state.rag_warmed_up:
-        seed_status_box = st.empty()
-        seed_ready = False
-        response_content = "👋 Qdrant warm-up skipped. You can still ask a question once ready."
-
-        for _ in range(180):
-            status = fetch_seed_status()
-            if status:
-                state = status.get("state") or "idle"
-                seeded = int(status.get("seeded") or 0)
-                total = int(status.get("total") or 0)
-                message = status.get("message") or ""
-                pct = min(int(seeded / total * 100), 100) if total else 0
-
-                if state in {"idle", "checking", "initializing", "counting"}:
-                    seed_status_box.info(message or "Preparing Qdrant collection…")
-                elif state == "in_progress":
-                    seed_status_box.info(f"Seeding Qdrant… {seeded}/{total} ({pct}%)")
-                elif state == "completed":
-                    seed_status_box.success(f"Qdrant ready ({seeded}/{total})")
-                    seed_ready = True
-                    break
-                elif state == "error":
-                    seed_status_box.warning(f"Qdrant seeding error: {message}")
-                    break
-                else:
-                    seed_status_box.info(message or "Waiting for Qdrant seed status…")
-            else:
-                seed_status_box.info("Waiting for Qdrant seed status…")
-            time.sleep(1)
-        else:
-            seed_status_box.warning("Timed out waiting for Qdrant seed completion.")
-
-        backend_ready = wait_for_backend_ready() if seed_ready else False
-
-        if seed_ready and backend_ready:
-            with st.spinner("🔥 Warming up RAG models (3 queries from eval data)..."):
-                try:
-                    # Load real eval questions for warm-up (1 from each of 3 eval files = 3 total)
-                    # This ensures warm-up queries are similar to actual usage
-                    # Use fallback (MiniLM) for CPU performance
-                    warmup_questions = load_warmup_questions()
-
-                    for i, question in enumerate(warmup_questions, 1):
-                        requests.post(
-                            f"{BACKEND_URL}/api/rag/ask",
-                            json={
-                                "question": question,
-                                "top_k": 5,
-                                "include_timings": True,  # Use same code path as real queries
-                                "reranker": "fallback",
-                                "vector_limit": 5,
-                                "content_char_limit": 300
-                            },
-                            timeout=30
-                        )
-                        # Show progress for each query
-                        if i % 1 == 0:
-                            st.toast(f"🔥 Warming up... {i}/3 queries", icon="🔥")
-
-                    st.session_state.rag_warmed_up = True
-                    st.success("✅ Models fully warmed up! Ready for fast queries.")
-                    time.sleep(1)
-                    response_content = "✅ Qdrant and models are ready! Ask me something about the documents."
-                except Exception as e:
-                    st.warning(f"⚠️ Warmup failed: {e}")
-                    response_content = f"⚠️ Warm-up failed: {e}"
-        else:
-            if not seed_ready:
-                st.warning("⚠️ Qdrant seeding not completed, skipping warm-up this run.")
-                response_content = "⚠️ Qdrant seeding not completed; try again shortly or run a manual test."
-            elif not backend_ready:
-                st.warning("⚠️ Backend not ready, skipping warm-up this run.")
-                response_content = "⚠️ Backend not ready yet. Please retry once it's healthy."
-
+    # Warm-up is now handled at main page initialization (lines 1581-1645)
+    # Just show a welcome message on first RAG access
+    if "rag_first_access" not in st.session_state:
+        st.session_state.rag_first_access = True
         with st.chat_message("assistant"):
-            st.markdown(response_content)
-        # Keep RAG mode active after warm-up instead of resetting to None
-        # st.session_state.mode = None  # BUG: This resets mode to general AI
+            st.markdown("✅ **RAG system is ready!** All models have been warmed up during startup. Ask me anything about the documents.")
         st.session_state.awaiting_confirmation = False
-        # st.stop() - removed to allow page to render
 
     # =====================================================================
     # RAG Mode - Full replication of chat_rag.py
