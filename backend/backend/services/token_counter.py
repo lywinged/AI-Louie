@@ -210,19 +210,31 @@ class TokenCounter:
         """
         # Pricing table (per 1,000 tokens)
         # Updated prices as of 2024
+        # IMPORTANT: Order matters! More specific model names MUST come before generic ones
+        # because we use startswith() matching. Put "gpt-4o-mini" before "gpt-4"!
         pricing = {
-            "gpt-4": {"prompt": 0.03, "completion": 0.06},
-            "gpt-4-turbo": {"prompt": 0.01, "completion": 0.03},
+            # GPT-4o family (most specific first)
             "gpt-4o-mini": {"prompt": 0.00015, "completion": 0.0006},  # $0.15/1M input, $0.60/1M output
+            "gpt-4o": {"prompt": 0.0025, "completion": 0.01},  # $2.50/1M input, $10/1M output
+
+            # GPT-4 family (generic patterns last)
+            "gpt-4-turbo": {"prompt": 0.01, "completion": 0.03},
+            "gpt-4": {"prompt": 0.03, "completion": 0.06},
+
+            # GPT-3.5
             "gpt-3.5-turbo": {"prompt": 0.0005, "completion": 0.0015},
+
+            # Claude family (most specific first)
+            "claude-3-5-sonnet": {"prompt": 0.003, "completion": 0.015},
             "claude-3-opus": {"prompt": 0.015, "completion": 0.075},
             "claude-3-sonnet": {"prompt": 0.003, "completion": 0.015},
             "claude-3-haiku": {"prompt": 0.00025, "completion": 0.00125},
-            "claude-3-5-sonnet": {"prompt": 0.003, "completion": 0.015},
-            "deepseek-chat": {"prompt": 0.0001, "completion": 0.0002},
-            "deepseek-v3": {"prompt": 0.00027, "completion": 0.0011},
-            "deepseek-v3-250324": {"prompt": 0.00027, "completion": 0.0011},
+
+            # DeepSeek family (most specific first)
             "deepseek-v3-1-terminus": {"prompt": 0.00027, "completion": 0.0011},
+            "deepseek-v3-250324": {"prompt": 0.00027, "completion": 0.0011},
+            "deepseek-v3": {"prompt": 0.00027, "completion": 0.0011},
+            "deepseek-chat": {"prompt": 0.0001, "completion": 0.0002},
         }
 
         # Match the appropriate pricing tier
