@@ -84,6 +84,30 @@ class _StubAutoTokenizer:
 tokenizer_module.AutoTokenizer = _StubAutoTokenizer
 sys.modules["transformers"] = tokenizer_module
 
+# NOTE: numpy, scipy, sklearn are used by the application and will be real imports
+# We don't stub these as they're lightweight enough and already in requirements.txt
+
+# Provide a lightweight rank_bm25 stub
+rank_bm25_module = types.ModuleType("rank_bm25")
+
+
+class _StubBM25Okapi:
+    """Stub for BM25Okapi to avoid installing rank_bm25 during tests."""
+    def __init__(self, corpus, *args, **kwargs):
+        self.corpus = corpus if isinstance(corpus, list) else list(corpus)
+
+    def get_scores(self, query):
+        """Return dummy scores for query."""
+        return [0.5] * len(self.corpus)
+
+    def get_top_n(self, query, documents, n=5):
+        """Return first n documents as dummy results."""
+        return documents[:n] if documents else []
+
+
+rank_bm25_module.BM25Okapi = _StubBM25Okapi
+sys.modules["rank_bm25"] = rank_bm25_module
+
 # Provide a lightweight qdrant_client stub to avoid loading native libraries
 qdrant_models_module = types.ModuleType("qdrant_client.http.models")
 
