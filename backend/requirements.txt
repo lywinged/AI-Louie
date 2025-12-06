@@ -17,7 +17,7 @@ alembic==1.12.1
 qdrant-client==1.15.1
 onnxruntime==1.16.3
 onnx==1.15.0
-langchain==0.1.0
+langchain==0.1.20  # Updated to resolve langsmith dependency conflict
 pypdf==3.17.1
 huggingface-hub==0.23.0  # Updated for datasets 3.2.0 compatibility
 transformers==4.36.0  # Updated to support huggingface-hub 0.23.0
