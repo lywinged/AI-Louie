@@ -199,7 +199,7 @@ class TokenCounter:
         Pricing reference (2024):
         - GPT-4: $0.03/1K prompt, $0.06/1K completion
         - GPT-4 Turbo: $0.01/1K prompt, $0.03/1K completion
-        - gpt-4o-mini: $0.005/1K prompt, $0.015/1K completion
+        - GPT-4o-mini: $0.00015/1K prompt, $0.0006/1K completion ($0.15/1M input, $0.60/1M output)
         - GPT-3.5 Turbo: $0.0005/1K prompt, $0.0015/1K completion
 
         Args:
@@ -209,11 +209,11 @@ class TokenCounter:
             Cost in USD
         """
         # Pricing table (per 1,000 tokens)
+        # Updated prices as of 2024
         pricing = {
             "gpt-4": {"prompt": 0.03, "completion": 0.06},
             "gpt-4-turbo": {"prompt": 0.01, "completion": 0.03},
-            "gpt-4o-mini": {"prompt": 0.005, "completion": 0.015},
-            "gpt-4o-mini-mini": {"prompt": 0.00015, "completion": 0.0006},
+            "gpt-4o-mini": {"prompt": 0.00015, "completion": 0.0006},  # $0.15/1M input, $0.60/1M output
             "gpt-3.5-turbo": {"prompt": 0.0005, "completion": 0.0015},
             "claude-3-opus": {"prompt": 0.015, "completion": 0.075},
             "claude-3-sonnet": {"prompt": 0.003, "completion": 0.015},

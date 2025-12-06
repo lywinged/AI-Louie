@@ -1553,8 +1553,16 @@ if seed_state in ["checking", "initializing", "in_progress"]:
     # Store that seed is NOT ready
     st.session_state.seed_is_ready = False
 
-    # Auto-refresh every 5 seconds
-    time.sleep(5)
+    # Auto-refresh every 2 seconds using JavaScript
+    st.markdown("""
+    <script>
+        setTimeout(function() {
+            window.parent.location.reload();
+        }, 2000);
+    </script>
+    """, unsafe_allow_html=True)
+
+    # Fallback: trigger immediate rerun without blocking sleep
     st.rerun()
 
 elif seed_state == "completed":
