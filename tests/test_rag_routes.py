@@ -100,9 +100,9 @@ def test_rag_config_returns_model_info(monkeypatch):
     assert config["limits"]["content_char_min"] >= 100
     assert config["limits"]["content_char_max"] >= 500
 
-    # Check mode options
-    assert "primary" in config["mode_options"]
-    assert "fallback" in config["mode_options"]
+    # Check reranker options
+    assert "primary" in config["reranker_options"]
+    assert "fallback" in config["reranker_options"]
 
 
 def test_rag_seed_status_returns_status(monkeypatch):
