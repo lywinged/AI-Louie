@@ -1540,10 +1540,14 @@ if seed_state in ["checking", "initializing", "in_progress"]:
     progress_pct = (seeded / total * 100) if total > 0 else 0
 
     st.error(f"🔄 **System Initializing - Please Wait**")
+
+    # Use progress bar for smoother visual feedback
+    st.progress(progress_pct / 100.0 if progress_pct > 0 else 0.01)
+
     st.markdown(f"""
     **Qdrant vector database is being seeded with document embeddings...**
 
-    Progress: {seeded:,} / {total:,} vectors ({progress_pct:.1f}%)
+    Progress: **{seeded:,} / {total:,}** vectors ({progress_pct:.1f}%)
 
     ⏳ Please wait for initialization to complete before using RAG mode.
 
@@ -1553,16 +1557,8 @@ if seed_state in ["checking", "initializing", "in_progress"]:
     # Store that seed is NOT ready
     st.session_state.seed_is_ready = False
 
-    # Auto-refresh every 2 seconds using JavaScript
-    st.markdown("""
-    <script>
-        setTimeout(function() {
-            window.parent.location.reload();
-        }, 2000);
-    </script>
-    """, unsafe_allow_html=True)
-
-    # Fallback: trigger immediate rerun without blocking sleep
+    # Use st.empty() for smooth updates and auto-refresh
+    time.sleep(2)
     st.rerun()
 
 elif seed_state == "completed":
@@ -3330,6 +3326,22 @@ if current_mode == "rag":
                                 st.metric("Entity Extraction", f"{timings.get('entity_extraction_ms', 0):.0f}ms")
                             with col4:
                                 st.metric("Graph Query", f"{timings.get('graph_query_ms', 0):.0f}ms")
+
+                        # Display token usage and cost
+                        token_usage = result.get("token_usage", {})
+                        token_cost_usd = result.get("token_cost_usd", 0.0)
+                        if token_usage:
+                            st.markdown("---")
+                            st.markdown("### 💰 Token Usage & Cost")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Prompt Tokens", token_usage.get('prompt_tokens', 0))
+                            with col2:
+                                st.metric("Completion Tokens", token_usage.get('completion_tokens', 0))
+                            with col3:
+                                st.metric("Total Tokens", token_usage.get('total_tokens', 0))
+                            with col4:
+                                st.metric("Token Cost (USD)", f"${token_cost_usd:.4f}")
 
                     else:
                         if not used_streaming:
