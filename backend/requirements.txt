@@ -54,7 +54,7 @@ opentelemetry-exporter-otlp==1.22.0
 opentelemetry-exporter-prometheus==0.43b0
 
 # Data Quality Monitoring
-evidently==0.4.15
+evidently==0.7.17  # Updated to latest version for pydantic v2 compatibility
 
 # RAG Evaluation
 ragas==0.1.4
