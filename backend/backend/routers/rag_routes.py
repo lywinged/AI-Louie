@@ -1046,6 +1046,7 @@ async def _smart_rag_logic(
             total_time_ms=timings.get('total_ms', 0),
             timings=timings,
             token_usage=table_result.get('token_usage'),
+            token_cost_usd=table_result.get('token_cost_usd'),
             llm_used=True,
             models={"llm": os.getenv("OPENAI_MODEL", "gpt-4o")}
         )
@@ -1099,6 +1100,7 @@ async def _smart_rag_logic(
             total_time_ms=timings.get('total_ms', 0),
             timings=timings,
             token_usage=token_usage,
+            token_cost_usd=graph_result.get('token_cost_usd'),
             llm_used=True,
             models={
                 "embedding": "Graph Entity Extraction",
