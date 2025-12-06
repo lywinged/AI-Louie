@@ -234,11 +234,42 @@ def ensure_seed_collection(
             _delete_collection(collection_name)
 
         # Count total seed vectors for progress reporting
+        logger.info("Counting vectors in seed file %s (this may take 10-15 seconds)...", seed_path)
+        _set_seed_status(
+            state="counting",
+            message=f"Counting vectors in seed file ({seed_path.name})",
+            seeded=0,
+            total=target_count,
+            started_at=started_at,
+            finished_at=None,
+        )
+
         try:
-            counted_points = sum(1 for _ in _read_seed_lines(seed_path))
+            counted_points = 0
+            report_interval = 10000  # Report progress every 10k vectors
+
+            for line_num, _ in enumerate(_read_seed_lines(seed_path), 1):
+                counted_points = line_num
+
+                # Update progress every 10k vectors
+                if counted_points % report_interval == 0:
+                    logger.info(
+                        "Counting progress: %s vectors counted...",
+                        counted_points
+                    )
+                    _set_seed_status(
+                        state="counting",
+                        message=f"Counting vectors: {counted_points:,} counted so far",
+                        seeded=0,  # Not uploading yet
+                        total=counted_points,  # Update total as we count
+                        started_at=started_at,
+                        finished_at=None,
+                    )
+
             if counted_points:
                 total_points = counted_points
                 target_count = counted_points
+                logger.info("Finished counting: %s total vectors found", counted_points)
         except Exception as exc:
             logger.warning(
                 "Failed to count seed file (%s), falling back to target_count. Error: %s",

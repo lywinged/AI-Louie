@@ -1534,25 +1534,42 @@ if "seed_ready_notified" not in st.session_state:
     st.session_state.seed_ready_notified = False
 
 # Show blocking message if seed is not completed
-if seed_state in ["checking", "initializing", "in_progress"]:
+if seed_state in ["checking", "counting", "initializing", "in_progress"]:
     seeded = seed_status.get("seeded", 0)
     total = seed_status.get("total", 1)
-    progress_pct = (seeded / total * 100) if total > 0 else 0
+    message = seed_status.get("message", "")
 
-    st.error(f"🔄 **System Initializing - Please Wait**")
+    # Different display for counting vs uploading
+    if seed_state == "counting":
+        st.warning(f"📊 **Preparing Vector Database**")
+        st.info(f"**{message}**")
+        st.markdown(f"""
+        This is a one-time setup that happens on first startup.
 
-    # Use progress bar for smoother visual feedback
-    st.progress(progress_pct / 100.0 if progress_pct > 0 else 0.01)
+        ⏳ Please wait ~10-15 seconds while the system counts vectors in the seed file.
 
-    st.markdown(f"""
-    **Qdrant vector database is being seeded with document embeddings...**
+        You can use other modes (Code, Trip Planning, Stats) in the meantime.
+        """)
+        # Show indeterminate progress for counting
+        st.progress(0.5)
+    else:
+        # Normal seeding progress
+        progress_pct = (seeded / total * 100) if total > 0 else 0
 
-    Progress: **{seeded:,} / {total:,}** vectors ({progress_pct:.1f}%)
+        st.error(f"🔄 **System Initializing - Please Wait**")
 
-    ⏳ Please wait for initialization to complete before using RAG mode.
+        # Use progress bar for smoother visual feedback
+        st.progress(progress_pct / 100.0 if progress_pct > 0 else 0.01)
 
-    You can use other modes (Code, Trip Planning, Stats) in the meantime.
-    """)
+        st.markdown(f"""
+        **Qdrant vector database is being seeded with document embeddings...**
+
+        Progress: **{seeded:,} / {total:,}** vectors ({progress_pct:.1f}%)
+
+        ⏳ Please wait for initialization to complete before using RAG mode.
+
+        You can use other modes (Code, Trip Planning, Stats) in the meantime.
+        """)
 
     # Store that seed is NOT ready
     st.session_state.seed_is_ready = False
