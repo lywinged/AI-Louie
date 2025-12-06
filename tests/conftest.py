@@ -98,9 +98,26 @@ class _StubDistance:
     COSINE = "Cosine"
 
 
+class _StubScoredPoint:
+    """Stub for qdrant_client.models.ScoredPoint."""
+    def __init__(self, id=None, score=0.0, payload=None, vector=None):
+        self.id = id
+        self.score = score
+        self.payload = payload or {}
+        self.vector = vector
+
+
 qdrant_models_module.VectorParams = _StubVectorParams
 qdrant_models_module.Distance = _StubDistance
+qdrant_models_module.ScoredPoint = _StubScoredPoint
 sys.modules["qdrant_client.http.models"] = qdrant_models_module
+
+# Also expose as qdrant_client.models for direct imports
+qdrant_models_direct = types.ModuleType("qdrant_client.models")
+qdrant_models_direct.VectorParams = _StubVectorParams
+qdrant_models_direct.Distance = _StubDistance
+qdrant_models_direct.ScoredPoint = _StubScoredPoint
+sys.modules["qdrant_client.models"] = qdrant_models_direct
 
 qdrant_exc_module = types.ModuleType("qdrant_client.http.exceptions")
 
