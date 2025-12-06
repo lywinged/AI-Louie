@@ -2691,29 +2691,85 @@ if current_mode == "rag":
                     st.caption("Analyzing query intent and complexity")
                     time.sleep(0.3)
 
-                    st.markdown("**2️⃣ 🎯 Strategy Selection**")
-                    st.caption("Choosing optimal RAG pipeline...")
+                    st.markdown("**2️⃣ 🎯 Strategy Selection & Execution**")
+                    # Create a placeholder for progress updates
+                    progress_placeholder = st.empty()
+                    progress_messages = [
+                        "🔍 Classifying query intent...",
+                        "🎯 Selecting optimal RAG strategy...",
+                        "📊 Loading retrieval pipeline...",
+                        "🔎 Searching knowledge base...",
+                        "🧠 Processing query with LLM...",
+                        "⚡ Generating answer..."
+                    ]
+
+                    # Start progress animation in background
+                    import threading
+                    progress_idx = [0]
+                    stop_progress = [False]
+
+                    def update_progress():
+                        while not stop_progress[0]:
+                            progress_placeholder.caption(progress_messages[progress_idx[0] % len(progress_messages)])
+                            progress_idx[0] += 1
+                            time.sleep(2.5)
+
+                    progress_thread = threading.Thread(target=update_progress, daemon=True)
+                    progress_thread.start()
+
+                    try:
+                        # Call non-streaming API
+                        response = requests.post(
+                            f"{BACKEND_URL}/api/rag/{endpoint_override or 'ask-smart'}",
+                            json=payload,
+                            timeout=180
+                        )
+                    finally:
+                        # Stop progress animation
+                        stop_progress[0] = True
+                        progress_placeholder.empty()
+                elif rag_strategy == "graph":
+                    st.markdown("**1️⃣ 🔍 Extract Query Entities**")
+                    st.caption("Identifying key entities in your question...")
                     time.sleep(0.3)
 
-                    # Call non-streaming API
-                    response = requests.post(
-                        f"{BACKEND_URL}/api/rag/{endpoint_override or 'ask-smart'}",
-                        json=payload,
-                        timeout=180
-                    )
-                elif rag_strategy == "graph":
-                    # Display Graph RAG techniques
-                    for idx, (tech_name, tech_detail) in enumerate(techniques, 1):
-                        st.markdown(f"**{idx}️⃣ {tech_name}**")
-                        st.caption(tech_detail)
-                        time.sleep(0.3)
+                    st.markdown("**2️⃣ 🕸️ Graph RAG Execution**")
+                    # Create a placeholder for progress updates
+                    progress_placeholder = st.empty()
+                    progress_messages = [
+                        "🔎 Extracting entities from query...",
+                        "🕸️ Checking knowledge graph...",
+                        "⚡ JIT building missing entities...",
+                        "🔗 Extracting relationships from documents...",
+                        "📊 Traversing knowledge graph...",
+                        "🧠 Generating answer from graph context..."
+                    ]
 
-                    # Call Graph RAG API
-                    response = requests.post(
-                        f"{BACKEND_URL}/api/rag/{endpoint}",
-                        json=payload,
-                        timeout=180
-                    )
+                    # Start progress animation in background
+                    import threading
+                    progress_idx = [0]
+                    stop_progress = [False]
+
+                    def update_progress():
+                        while not stop_progress[0]:
+                            progress_placeholder.caption(progress_messages[progress_idx[0] % len(progress_messages)])
+                            progress_idx[0] += 1
+                            time.sleep(2.5)
+
+                    progress_thread = threading.Thread(target=update_progress, daemon=True)
+                    progress_thread.start()
+
+                    try:
+                        # Call Graph RAG API
+                        response = requests.post(
+                            f"{BACKEND_URL}/api/rag/{endpoint}",
+                            json=payload,
+                            timeout=180
+                        )
+                    finally:
+                        # Stop progress animation
+                        stop_progress[0] = True
+                        progress_placeholder.empty()
                 elif rag_strategy == "table":
                     # Display Table RAG techniques
                     for idx, (tech_name, tech_detail) in enumerate(techniques, 1):
@@ -2852,9 +2908,11 @@ if current_mode == "rag":
                         with col2:
                             st.metric("📄 Chunks", result.get('num_chunks_retrieved', 0))
                         with col3:
-                            st.metric("🎯 Confidence", f"{result.get('confidence', 0):.3f}")
+                            token_cost_usd = result.get('token_cost_usd', 0)
+                            cost_display = f"${token_cost_usd:.6f}" if token_cost_usd > 0 else "$0.0000"
+                            st.metric("💰 Token Cost (USD)", cost_display)
                         with col4:
-                            st.metric("🪙 Tokens", total_tokens if total_tokens > 0 else "N/A")
+                            st.metric("🪙 Total Tokens", total_tokens if total_tokens > 0 else "N/A")
 
                         # Token breakdown - detailed pipeline view
                         token_breakdown = token_breakdown or result.get('token_breakdown')
