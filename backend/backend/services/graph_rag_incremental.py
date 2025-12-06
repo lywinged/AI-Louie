@@ -993,6 +993,8 @@ If the graph shows relationships between entities, explain those connections.
                 model=self.generation_model,
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                timestamp=datetime.now(),
             )
             cost_usd = token_counter.calculate_cost(usage_obj)
 
