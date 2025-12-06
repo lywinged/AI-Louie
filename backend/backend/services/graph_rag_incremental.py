@@ -113,6 +113,10 @@ class IncrementalGraphRAG:
         # Simple memo to avoid re-building the same entity set repeatedly
         self.jit_cache: Dict[Tuple[str, ...], Dict[str, Any]] = {}
 
+        # Token tracking for current JIT build (thread-safe for async)
+        self._current_jit_tokens = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+        self._current_jit_cost = 0.0
+
         # Statistics
         self.stats = GraphStats(
             num_entities=0,
@@ -402,9 +406,9 @@ Keep it concise - maximum 5 entities.
         relationships_added = 0
         chunks_processed = 0
 
-        # Track token usage from JIT LLM calls
-        jit_tokens = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
-        jit_cost_usd = 0.0
+        # Reset token tracking for this JIT build
+        self._current_jit_tokens = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+        self._current_jit_cost = 0.0
 
         # Search Qdrant for relevant chunks
         search_query = f"{context_query} {' '.join(entity_names)}"
@@ -576,11 +580,13 @@ Keep it concise - maximum 5 entities.
                 'entities_added': entities_added,
                 'relationships_added': relationships_added,
                 'chunks_processed': chunks_processed,
-                'token_usage': jit_tokens,  # Add token usage tracking
-                'token_cost_usd': jit_cost_usd,  # Add cost tracking
+                'token_usage': self._current_jit_tokens.copy(),  # Use instance variable
+                'token_cost_usd': self._current_jit_cost,  # Use instance variable
             }
             # Memoize result for this entity set
             self.jit_cache[cache_key] = result
+
+            logger.info(f"JIT build token usage: {self._current_jit_tokens['total_tokens']} tokens, ${self._current_jit_cost:.4f}")
 
             return result
 
@@ -656,6 +662,27 @@ Entity names should be lowercase. Limit: max 10 entities and 15 relationships pe
                 response_format={"type": "json_object"},
             )
             logger.info(f"LLM batch_extract success: {len(chunks)} chunks")
+
+            # Track tokens from this LLM call
+            from backend.services.token_counter import get_token_counter, TokenUsage
+            token_counter = get_token_counter()
+            actual_model = getattr(response, 'model', self.extraction_model)
+            usage_obj = TokenUsage(
+                model=actual_model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                timestamp=datetime.now(),
+            )
+            batch_cost = token_counter.estimate_cost(usage_obj)
+
+            # Accumulate to instance variable (thread-safe for async in same instance)
+            self._current_jit_tokens['prompt_tokens'] += response.usage.prompt_tokens
+            self._current_jit_tokens['completion_tokens'] += response.usage.completion_tokens
+            self._current_jit_tokens['total_tokens'] += response.usage.total_tokens
+            self._current_jit_cost += batch_cost
+
+            logger.info(f"Batch extract tokens: {response.usage.total_tokens}, cost: ${batch_cost:.4f}")
 
             content = response.choices[0].message.content.strip()
 
