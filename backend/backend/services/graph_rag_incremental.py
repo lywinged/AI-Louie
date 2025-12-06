@@ -237,6 +237,7 @@ class IncrementalGraphRAG:
             'graph_stats': asdict(self.stats),
             'timings': {**timings, 'graph_context': graph_context},
             'token_usage': answer_result.get('token_usage', {}),
+            'token_cost_usd': answer_result.get('token_cost_usd', 0.0),
             'query_entities': query_entities,
             'cache_hit': len(missing_entities) == 0,
         }
