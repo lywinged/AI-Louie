@@ -1081,6 +1081,14 @@ async def _smart_rag_logic(
         timings['cache_hit'] = graph_result.get('cache_hit')
         timings['query_entities'] = graph_result.get('query_entities')
 
+        # Map token_usage from Graph RAG format to expected format
+        graph_token_usage = graph_result.get('token_usage', {})
+        token_usage = {
+            'prompt': graph_token_usage.get('prompt_tokens', 0),
+            'completion': graph_token_usage.get('completion_tokens', 0),
+            'total': graph_token_usage.get('total_tokens', 0),
+        }
+
         response = RAGResponse(
             answer=graph_result['answer'],
             citations=[],
@@ -1090,9 +1098,13 @@ async def _smart_rag_logic(
             llm_time_ms=timings.get('answer_generation_ms', 0),
             total_time_ms=timings.get('total_ms', 0),
             timings=timings,
-            token_usage=graph_result.get('token_usage'),
+            token_usage=token_usage,
             llm_used=True,
-            models={"llm": os.getenv("OPENAI_MODEL", "gpt-4o")}
+            models={
+                "embedding": "Graph Entity Extraction",
+                "reranker": "Graph Traversal",
+                "llm": os.getenv("OPENAI_MODEL", "gpt-4o")
+            }
         )
         response.selected_strategy = "Graph RAG"
         response.strategy_reason = f"Chosen by bandit; query type: {query_type}. {strategy_description}"

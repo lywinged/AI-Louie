@@ -18,12 +18,20 @@ A comprehensive Streamlit + FastAPI platform featuring advanced RAG strategies, 
    # Edit .env with your API keys
    ```
 
-2. **Start all services**:
+2. **(Optional) Download large BGE models**:
+   ```bash
+   # System works with included MiniLM models (44MB)
+   # Download BGE models (834MB) for higher accuracy
+   ./scripts/download_models.sh
+   ```
+   > 📥 See [Model Download Guide](docs/MODEL_DOWNLOAD_GUIDE.md) for detailed instructions
+
+3. **Start all services**:
    ```bash
    ./start.sh
    ```
 
-3. **Access the platform**:
+4. **Access the platform**:
    - 🎨 **Frontend UI**: http://localhost:18501
    - 📡 **Backend API**: http://localhost:8888/docs
    - 📊 **Grafana**: http://localhost:3000 (admin/admin)
@@ -355,6 +363,131 @@ ENABLE_TELEMETRY=true
 OTLP_ENDPOINT=http://jaeger:4317
 GRAFANA_ADMIN_PASSWORD=admin
 ```
+
+---
+
+## 🚀 Advanced Features
+
+### 🧠 Thompson Sampling Multi-Armed Bandit
+- **Adaptive strategy selection**: Automatically learns optimal RAG strategy per query type
+- **Exploration-exploitation balance**: 20% exploration bonus for under-explored strategies
+- **Persistent learning**: Saves bandit state to disk for cross-session knowledge retention
+- **Real-time metrics**: Prometheus metrics for arm selection, rewards, and regret
+- **Warm-up optimization**: 3 strategic queries to initialize all arms (~70s)
+- **Feedback loop**: User ratings (👍/👎) update bandit weights dynamically
+
+### 🔄 Answer Cache with Quality Control
+- **Multi-layer cache architecture**:
+  - Layer 1: Exact match (O(1) lookup)
+  - Layer 2: TF-IDF similarity (threshold: 0.85)
+  - Layer 3: Semantic embedding (threshold: 0.85)
+- **Quality thresholds**: Only cache answers with ≥1 citation AND ≥1 chunk
+- **TTL management**: Configurable expiration (default: 24h)
+- **LRU eviction**: Max 1000 entries with automatic cleanup
+- **Token savings tracking**: Displays saved tokens/cost on cache hit
+- **Cache hit visualization**: Green checkmark indicator in UI
+
+### 🕸️ Just-In-Time Graph RAG
+- **Dynamic entity extraction**: On-the-fly relationship discovery from retrieved chunks
+- **Parallel processing**: Batch extraction with configurable workers (default: 4)
+- **Graph persistence**: NetworkX graph cached across queries
+- **Incremental updates**: Adds new entities/relationships without rebuilding
+- **Timeout protection**: Configurable max processing time (default: 30s)
+- **Max chunk limit**: Prevents runaway extraction (default: 50 chunks)
+- **Relationship scoring**: Weighted edges for semantic connection strength
+
+### 📊 Table RAG with Intent Analysis
+- **Intent classification**: Automatically detects comparison/list/aggregation queries
+- **Structured extraction**: LLM-powered tabular data identification
+- **Markdown formatting**: Clean, readable table output
+- **Multi-column support**: Dynamic column detection based on content
+- **Header inference**: Automatic column naming from data patterns
+
+### 🔍 Hybrid Retriever with RRF Fusion
+- **Dual-mode search**: BM25 keyword (30%) + Dense vector (70%)
+- **Reciprocal Rank Fusion**: Score fusion with configurable weights
+- **Cross-encoder reranking**: BGE-M3 or MiniLM for final scoring
+- **File-based BM25 index**: Instant startup with persistent cache
+- **Fallback mechanism**: Auto-switch to fast reranker if >300ms
+
+### 🔁 Iterative Self-RAG with Confidence Scoring
+- **Confidence-based iteration**: Continues until threshold (0.75) or max iterations (3)
+- **Self-assessment**: LLM evaluates answer quality and generates refinement queries
+- **Early stopping**: Halts if improvement <0.05 between iterations
+- **Query refinement**: Automatically reformulates questions for better retrieval
+- **Iteration tracking**: Detailed per-iteration token/cost/confidence display
+
+### 🎯 Query Classification Cache
+- **Strategy prediction cache**: Reduces LLM calls for similar query types
+- **Semantic similarity**: Embedding-based classification lookup
+- **TTL management**: Configurable expiration per classification
+- **Classification override**: Manual strategy selection bypasses cache
+
+### ⚡ ONNX INT8 Quantization
+- **3-4x speedup**: Quantized embedding and reranking models
+- **Memory efficiency**: 75% smaller model footprint
+- **Remote inference service**: Dedicated container for model execution
+- **GPU support**: CUDA acceleration when available
+- **Model warm-up**: Pre-loads models during startup for fast first query
+
+### 📁 Multi-Collection Search
+- **Dual collection support**: System documents + User uploads
+- **Collection isolation**: Separate Qdrant collections with independent vectors
+- **Search scope control**: Filter by "All", "My Uploads", or "System" documents
+- **Smart RAG integration**: Works seamlessly with auto-selection across collections
+- **Upload management**: Document ingestion with chunking, embedding, and metadata
+
+### 🧪 Code Generation with Print Injection
+- **AST manipulation**: Automatically injects print statements into test code
+- **Framework support**: pytest, unittest, Jest, JUnit, googletest, cargo test
+- **Assertion handling**:
+  - Plain `assert` statements
+  - unittest.TestCase methods (assertEqual, assertTrue, etc.)
+  - Shows "=== Program Output ===" sections
+- **Multi-language**: Python, JavaScript, Java, C++, Go, Rust
+- **Download support**: Combined code + tests in single file
+
+### 🎨 Dynamic UI Enhancements
+- **Mode activation messages**: Displayed on every switch (not just first time)
+- **Strategy descriptions**: Detailed info boxes for each RAG strategy
+- **Example question dropdowns**: Context-aware suggestions per mode
+- **Progress indicators**: Real-time status for long-running operations (Graph RAG, Self-RAG)
+- **Governance panel**: Live checkpoint tracking with color-coded status
+- **Token cost breakdown**: Per-query token usage and USD cost estimation
+
+### 🔐 AI Governance Integration
+- **12 governance criteria**: Safety case, risk tiering, observability, SLO monitoring
+- **Automated checkpoints**:
+  - G4 Permission Layers: User authorization
+  - G6 Version Control: Model/prompt versioning
+  - G7 Observability: Audit trails and trace IDs
+  - G8 Evaluation System: Latency/quality SLO checks
+  - G9 Data Governance: Data source tracking
+  - G12 Dashboard: Metrics export for Grafana
+- **Risk tier classification**: R0 (Internal) → R1 (Customer Facing) → R2 (Decision Support) → R3 (Automated Actions)
+- **Citation enforcement**: R1 operations require ≥95% citation coverage
+- **Trace ID propagation**: Unique IDs across distributed services for audit
+
+### 📈 Distributed Tracing (Jaeger)
+- **End-to-end visibility**: Request flow across frontend → backend → inference → Qdrant
+- **Instrumentation**: FastAPI, HTTPX, SQLAlchemy auto-instrumentation
+- **Custom spans**: RAG pipeline stages, LLM calls, cache lookups
+- **Performance profiling**: Identify bottlenecks in complex queries
+- **Error correlation**: Link failures across service boundaries
+
+### 🔄 Session Management with SQLite
+- **Persistent conversations**: Chat history survives container restarts
+- **Multi-mode support**: Separate conversation threads per mode
+- **Message metadata**: Timestamps, token usage, confidence scores
+- **Session export**: Download conversation history as JSON
+- **Auto-cleanup**: Configurable retention policies
+
+### 🚦 Health Check Orchestration
+- **Dependency waiting**: Frontend blocks until backend is healthy
+- **Graceful startup**: Sequential service initialization (Qdrant → Backend → Frontend)
+- **Auto-retry**: Exponential backoff for failed health checks
+- **Status display**: UI shows "System Initializing" during seed upload
+- **Progress tracking**: Real-time vector count during Qdrant seeding
 
 ---
 

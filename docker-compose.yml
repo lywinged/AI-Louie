@@ -30,6 +30,7 @@ services:
     environment:
       - DEVICE=cpu
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-6}
+      # MiniLM models (384-dim, matches Qdrant collection)
       - ONNX_EMBED_MODEL_PATH=/app/models/minilm-embed-int8
       - ONNX_RERANK_MODEL_PATH=/app/models/minilm-reranker-onnx
       - USE_INT8_QUANTIZATION=${USE_INT8_QUANTIZATION:-true}

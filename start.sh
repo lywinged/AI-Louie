@@ -2,6 +2,95 @@
 set -euo pipefail
 
 # ===========================
+# Docker Check & Auto-Start
+# ===========================
+check_and_start_docker() {
+  echo "🐳 Checking Docker status..."
+
+  # Check if docker command exists
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "❌ Docker is not installed. Please install Docker first:"
+    echo "   macOS: https://docs.docker.com/desktop/install/mac-install/"
+    echo "   Linux: https://docs.docker.com/engine/install/"
+    exit 1
+  fi
+
+  # Check if Docker daemon is running
+  if ! docker info >/dev/null 2>&1; then
+    echo "⚠️  Docker daemon is not running. Attempting to start..."
+
+    case "$OSTYPE" in
+      darwin*)
+        # macOS: Start Docker Desktop
+        echo "   Starting Docker Desktop..."
+        open -a Docker
+        echo "   Waiting for Docker to start (this may take 30-60 seconds)..."
+
+        # Wait for Docker to be ready (max 120 seconds)
+        for i in {1..60}; do
+          if docker info >/dev/null 2>&1; then
+            echo "   ✅ Docker is now running!"
+            return 0
+          fi
+          sleep 2
+          echo -n "."
+        done
+        echo
+        echo "❌ Docker failed to start within 120 seconds. Please start Docker Desktop manually."
+        exit 1
+        ;;
+
+      linux*)
+        # Linux: Try to start Docker service
+        echo "   Attempting to start Docker service..."
+
+        # Try systemctl (most common on modern Linux)
+        if command -v systemctl >/dev/null 2>&1; then
+          if sudo systemctl start docker 2>/dev/null; then
+            echo "   Waiting for Docker to start..."
+            sleep 5
+            if docker info >/dev/null 2>&1; then
+              echo "   ✅ Docker is now running!"
+              return 0
+            fi
+          fi
+        fi
+
+        # Try service command (older Linux)
+        if command -v service >/dev/null 2>&1; then
+          if sudo service docker start 2>/dev/null; then
+            echo "   Waiting for Docker to start..."
+            sleep 5
+            if docker info >/dev/null 2>&1; then
+              echo "   ✅ Docker is now running!"
+              return 0
+            fi
+          fi
+        fi
+
+        echo "❌ Failed to start Docker automatically. Please start it manually:"
+        echo "   sudo systemctl start docker"
+        echo "   or"
+        echo "   sudo service docker start"
+        exit 1
+        ;;
+
+      *)
+        echo "❌ Unsupported OS: $OSTYPE"
+        echo "   Please start Docker manually and try again."
+        exit 1
+        ;;
+    esac
+  else
+    echo "   ✅ Docker is already running"
+  fi
+}
+
+# Run Docker check
+check_and_start_docker
+echo
+
+# ===========================
 # Config
 # ===========================
 DATA_ZIP="data.zip"

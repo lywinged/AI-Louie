@@ -72,16 +72,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         try:
             summary = ensure_seed_collection()
             logger.info("📚 Qdrant seed summary: %s", summary)
+            return True
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("⚠️  Qdrant seed bootstrap skipped: %s", exc)
-
-    loop.run_in_executor(None, _bootstrap_seed)
+            return False
 
     async def _warm_smart_rag():
         enabled = os.getenv("WARM_SMART_RAG", "1") != "0"
         set_bandit_enabled(enabled)
         if not enabled:
             return
+
+        # Wait for seed to complete first
+        logger.info("⏳ Waiting for Qdrant seed to complete before warm-up...")
+        seed_success = await loop.run_in_executor(None, _bootstrap_seed)
+
+        if not seed_success:
+            logger.warning("⚠️  Skipping warm-up due to seed failure")
+            return
+
+        logger.info("✅ Seed complete, starting Smart RAG warm-up...")
         mark_bandit_started()
         base_url = f"http://localhost:{getattr(settings, 'BACKEND_PORT', 8888)}"
         # Warm up queries (reduced to 3 for faster startup):
@@ -102,7 +112,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
                         f"{base_url}/api/rag/ask-smart",
                         json={"question": q, "top_k": 5, "include_timings": True},
                     )
-                    logger.info("Warm smart RAG: %s (status=%s)", q[:80], resp.status_code)
+                    logger.info("🔥 Warm smart RAG: %s (status=%s)", q[:80], resp.status_code)
                 except Exception as warm_err:
                     logger.warning("Warm smart RAG failed: %s (query: %s)", warm_err, q[:50])
                     mark_bandit_error(str(warm_err))
@@ -110,8 +120,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
                     increment_bandit_completed()
                     await asyncio.sleep(1)
         mark_bandit_done()
+        logger.info("✅ Smart RAG warm-up complete!")
 
+    # Start background warm-up task (non-blocking)
+    logger.info("🔄 Starting background tasks: Qdrant seeding → Smart RAG warm-up")
     loop.create_task(_warm_smart_rag())
+    logger.info("✅ Backend is ready! Background tasks running...")
 
     yield
 

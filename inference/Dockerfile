@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # CRITICAL: numpy<2.0 required for onnxruntime compatibility
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "numpy>=1.24.0,<2.0" && \
+    pip install --no-cache-dir protobuf==3.20.3 && \
     pip install --no-cache-dir --no-deps onnxruntime==1.16.3 onnx==1.15.0 && \
     pip install --no-cache-dir \
     fastapi==0.104.1 \
@@ -29,7 +30,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     prometheus-client==0.19.0 \
     aiofiles==23.2.1 \
     tenacity==8.2.3 \
-    transformers==4.35.2
+    transformers==4.35.2 \
+    sentencepiece==0.1.99
 
 # Copy only the ONNX inference files (not main.py to avoid Prometheus metric conflicts)
 COPY backend/backend/services/inference/__init__.py /app/inference_service/__init__.py

@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import os
 import logging
+import subprocess
+import urllib.request
 from functools import lru_cache
+from pathlib import Path
 from threading import Lock
 from typing import List, Optional
 
@@ -16,6 +19,68 @@ from transformers import AutoTokenizer
 from backend.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+# Model download URLs
+MODEL_DOWNLOAD_URLS = {
+    "bge-m3-embed-int8": "https://huggingface.co/louielunz/bge-embed/resolve/main/model_int8.onnx",
+    "bge-reranker-int8": "https://huggingface.co/louielunz/bge-reranker/resolve/main/model_int8.onnx",
+}
+
+
+def _download_model(model_path: str, target_file: str) -> bool:
+    """
+    Auto-download ONNX model from Hugging Face if missing.
+
+    Args:
+        model_path: Base model directory path
+        target_file: Target file path to download to
+
+    Returns:
+        True if download successful, False otherwise
+    """
+    # Determine which model to download based on path
+    model_key = None
+    if "bge-m3" in model_path or "bge-embed" in model_path:
+        model_key = "bge-m3-embed-int8"
+    elif "bge-reranker" in model_path:
+        model_key = "bge-reranker-int8"
+
+    if not model_key or model_key not in MODEL_DOWNLOAD_URLS:
+        logger.warning(f"No download URL configured for model: {model_path}")
+        return False
+
+    download_url = MODEL_DOWNLOAD_URLS[model_key]
+
+    try:
+        # Create directory if it doesn't exist
+        Path(target_file).parent.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"📥 Downloading {model_key} from Hugging Face...")
+        logger.info(f"   URL: {download_url}")
+        logger.info(f"   Target: {target_file}")
+
+        # Use curl for better progress display (fallback to urllib)
+        try:
+            subprocess.run(
+                ["curl", "-L", "-o", target_file, download_url],
+                check=True,
+                capture_output=True
+            )
+            logger.info(f"✅ Download successful: {target_file}")
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # Fallback to urllib if curl not available
+            logger.info("   Using urllib for download...")
+            urllib.request.urlretrieve(download_url, target_file)
+            logger.info(f"✅ Download successful: {target_file}")
+            return True
+
+    except Exception as e:
+        logger.error(f"❌ Failed to download model: {e}")
+        # Clean up partial download
+        if os.path.exists(target_file):
+            os.remove(target_file)
+        return False
 
 
 def _has_cuda_available() -> bool:
@@ -39,6 +104,8 @@ def _resolve_model_file(model_path: str, prefer_int8: bool = True) -> str:
     Auto-detects GPU:
     - If GPU available: Use full precision model.onnx (better quality)
     - If CPU only: Use int8 quantized model_int8.onnx (faster on CPU)
+
+    Auto-downloads missing models from Hugging Face.
     """
     # Auto-detect: GPU prefers FP32, CPU prefers INT8
     has_gpu = _has_cuda_available()
@@ -66,8 +133,28 @@ def _resolve_model_file(model_path: str, prefer_int8: bool = True) -> str:
             if os.path.isfile(candidate):
                 logger.info(f"✅ Using ONNX model: {candidate}")
                 return candidate
+
+        # Model file not found - try auto-download
+        logger.warning(f"⚠️  ONNX model not found in: {model_path}")
+        logger.info("🔄 Attempting automatic download from Hugging Face...")
+
+        # Try to download to the first candidate path
+        download_target = candidates[0] if candidates else os.path.join(model_path, "model_int8.onnx")
+        if _download_model(model_path, download_target):
+            if os.path.isfile(download_target):
+                logger.info(f"✅ Using downloaded model: {download_target}")
+                return download_target
+
+        # Download failed - raise error
+        logger.error(f"❌ Auto-download failed. Please run: ./scripts/download_models.sh")
+        raise FileNotFoundError(
+            f"ONNX model file not found for path: {model_path}\n"
+            f"Automatic download failed. Please run: ./scripts/download_models.sh"
+        )
+
     if os.path.isfile(model_path):
         return model_path
+
     raise FileNotFoundError(f"ONNX model file not found for path: {model_path}")
 
 

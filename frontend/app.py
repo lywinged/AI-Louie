@@ -726,11 +726,12 @@ Best for: Comparison queries, data listing, structured information extraction.""
     upload_tab, paste_tab = target.tabs(["📁 Upload File", "📝 Paste Text"])
 
     with upload_tab:
-        uploaded_file = st.file_uploader(
-            "Choose a file",
+        uploaded_files = st.file_uploader(
+            "Choose file(s)",
             type=["pdf", "txt", "docx", "xlsx", "xls", "csv"],
             help="Upload PDF, TXT, Word, Excel, or CSV files to add to the knowledge base",
-            key="file_uploader"
+            key="file_uploader",
+            accept_multiple_files=True
         )
         use_separate_collection = st.checkbox(
             "Store uploads in a separate user collection",
@@ -739,9 +740,25 @@ Best for: Comparison queries, data listing, structured information extraction.""
             key="use_separate_collection_checkbox",
         )
 
-        if uploaded_file is not None:
-            if st.button("🚀 Upload and Vectorize", key="upload_button"):
-                with st.spinner(f"Processing {uploaded_file.name}..."):
+        if uploaded_files:
+            # Show file list
+            st.write(f"**{len(uploaded_files)} file(s) selected:**")
+            for idx, file in enumerate(uploaded_files, 1):
+                st.caption(f"{idx}. {file.name} ({file.size / 1024:.1f} KB)")
+
+            if st.button("🚀 Upload and Vectorize All", key="upload_button"):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                total_chunks = 0
+                successful_files = 0
+                failed_files = []
+
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    progress = (idx) / len(uploaded_files)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Processing {idx + 1}/{len(uploaded_files)}: {uploaded_file.name}...")
+
                     try:
                         response = requests.post(
                             f"{BACKEND_URL}/api/rag/upload-file",
@@ -756,18 +773,28 @@ Best for: Comparison queries, data listing, structured information extraction.""
 
                             # Update stats
                             st.session_state.upload_stats["total_files"] += 1
+                            total_chunks += result["total_chunks"]
                             st.session_state.upload_stats["total_chunks"] += result["total_chunks"]
                             st.session_state.upload_stats["last_upload"] = uploaded_file.name
-
-                            st.success(f"✅ Successfully processed {uploaded_file.name}")
-                            info_message = f"📊 Created {result['total_chunks']} chunks from {result['documents_processed']} document(s)"
-                            if collection:
-                                info_message += f" → stored in collection `{collection}`"
-                            st.info(info_message)
+                            successful_files += 1
                         else:
-                            st.error(f"❌ Upload failed: {response.text}")
+                            failed_files.append(f"{uploaded_file.name}: {response.text}")
                     except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
+                        failed_files.append(f"{uploaded_file.name}: {str(e)}")
+
+                # Complete progress
+                progress_bar.progress(1.0)
+                status_text.text("Upload complete!")
+
+                # Show results
+                if successful_files > 0:
+                    st.success(f"✅ Successfully processed {successful_files}/{len(uploaded_files)} file(s)")
+                    st.info(f"📊 Created {total_chunks} total chunks")
+
+                if failed_files:
+                    st.error(f"❌ {len(failed_files)} file(s) failed:")
+                    for error in failed_files:
+                        st.caption(f"• {error}")
 
     with paste_tab:
         pasted_text = st.text_area(
@@ -826,6 +853,25 @@ Best for: Comparison queries, data listing, structured information extraction.""
         col_u2.metric("Total Chunks", st.session_state.upload_stats["total_chunks"])
         if st.session_state.upload_stats["last_upload"]:
             target.caption(f"Last upload: {st.session_state.upload_stats['last_upload']}")
+
+    # Example Questions Dropdown in Sidebar (below Upload section)
+    target.markdown("---")
+    target.markdown("### 💡 Example Questions")
+
+    def on_sidebar_example_select():
+        selected = st.session_state.get("sidebar_example_selectbox")
+        if selected and selected != "Select a question...":
+            append_chat_history("user", selected)
+            st.session_state.pending_prompt = selected
+            # Reset dropdown
+            st.session_state["sidebar_example_selectbox"] = "Select a question..."
+
+    target.selectbox(
+        "Choose a question to get started:",
+        options=["Select a question..."] + EXAMPLE_QUESTIONS_BOTTOM,
+        key="sidebar_example_selectbox",
+        on_change=on_sidebar_example_select
+    )
 
 
 # =====================================================================
@@ -1471,6 +1517,61 @@ elif is_cold_start and smart_status.get("enabled") and smart_status.get("started
     completed = smart_status.get("completed") or 0
     progress = f"{completed}/{total}" if total else f"{completed}"
     st.warning(f"⚠️ No bandit weights found - warm-up running in background... ({progress}). You can keep using the app.")
+
+# Check Qdrant seed status and block RAG if not ready
+def check_seed_status():
+    try:
+        resp = requests.get(f"{BACKEND_URL}/api/rag/seed-status", timeout=3)
+        return resp.json()
+    except Exception:
+        return {"state": "error", "message": "Cannot connect to backend"}
+
+seed_status = check_seed_status()
+seed_state = seed_status.get("state", "unknown")
+
+# Initialize seed notification flag
+if "seed_ready_notified" not in st.session_state:
+    st.session_state.seed_ready_notified = False
+
+# Show blocking message if seed is not completed
+if seed_state in ["checking", "initializing", "in_progress"]:
+    seeded = seed_status.get("seeded", 0)
+    total = seed_status.get("total", 1)
+    progress_pct = (seeded / total * 100) if total > 0 else 0
+
+    st.error(f"🔄 **System Initializing - Please Wait**")
+    st.markdown(f"""
+    **Qdrant vector database is being seeded with document embeddings...**
+
+    Progress: {seeded:,} / {total:,} vectors ({progress_pct:.1f}%)
+
+    ⏳ Please wait for initialization to complete before using RAG mode.
+
+    You can use other modes (Code, Trip Planning, Stats) in the meantime.
+    """)
+
+    # Store that seed is NOT ready
+    st.session_state.seed_is_ready = False
+
+    # Auto-refresh every 5 seconds
+    time.sleep(5)
+    st.rerun()
+
+elif seed_state == "completed":
+    # Seed is ready
+    if not st.session_state.seed_ready_notified:
+        st.success("✅ Qdrant vector database is ready!")
+        st.session_state.seed_ready_notified = True
+    st.session_state.seed_is_ready = True
+
+elif seed_state == "error":
+    st.error(f"❌ Qdrant seeding failed: {seed_status.get('message', 'Unknown error')}")
+    st.session_state.seed_is_ready = False
+
+else:
+    # Unknown state - assume ready to avoid blocking
+    st.session_state.seed_is_ready = True
+
 if "pending_prompt" not in st.session_state:
     st.session_state.pending_prompt = None
 
@@ -1591,6 +1692,9 @@ elif st.session_state.rag_reranker_choice not in reranker_options:
 
 if "show_governance_info" not in st.session_state:
     st.session_state.show_governance_info = False
+
+if "show_rag_examples_inline" not in st.session_state:
+    st.session_state.show_rag_examples_inline = False
 
 
 # =====================================================================
@@ -2145,7 +2249,7 @@ Use the buttons below or chat naturally - I'll route your request intelligently!
 """)
 
 # =====================================================================
-# Quick action buttons (3: RAG, Trip, Code)
+# Quick action buttons (3: RAG, Trip, Code) - Always at Top
 # =====================================================================
 
 col1, col2, col3 = st.columns(3)
@@ -2171,14 +2275,49 @@ st.markdown("---")
 # Display chat history
 # =====================================================================
 
-for message in st.session_state.messages:
+# Example questions data (defined once for use below)
+EXAMPLE_QUESTIONS_BOTTOM = [
+    "Who wrote DADDY TAKE ME SKATING?",
+    "Tell me about American frontier history",
+    "'Sir roberts fortune a novel', show me roles relationship",
+    "'Sir roberts fortune a novel', list all the roles",
+    "'Sir roberts fortune a novel', for what purpose he was confident of his own powers of cheating the uncle, and managing?"
+]
+
+for idx, message in enumerate(st.session_state.messages):
     content = message.get("content", "")
     if message.get("role") == "assistant":
         content = clean_text_lines(content)
         if not content:
             continue
+
+    # Check if this is a RAG assistant message
+    is_rag_assistant = (message.get("role") == "assistant" and
+                        st.session_state.mode == "rag")
+
     with st.chat_message(message["role"]):
         st.markdown(content)
+
+        # Add example questions dropdown for RAG assistant messages (historical)
+        if is_rag_assistant:
+            # Use unique key based on message index
+            dropdown_key = f"rag_example_history_{idx}"
+
+            def on_history_example_select():
+                selected = st.session_state.get(dropdown_key)
+                if selected and selected != "Select a question...":
+                    append_chat_history("user", selected)
+                    st.session_state.pending_prompt = selected
+                    st.session_state[dropdown_key] = "Select a question..."
+
+            st.selectbox(
+                "💡 Example Questions",
+                options=["Select a question..."] + EXAMPLE_QUESTIONS_BOTTOM,
+                key=dropdown_key,
+                on_change=on_history_example_select
+            )
+
+# (Sidebar example questions removed - now using inline version above chat history)
 
 # Auto-scroll to bottom of chat after new messages
 # Use a unique key tied to message count to force re-execution
@@ -2267,43 +2406,14 @@ if st.session_state.mode == "code":
     st.divider()
 
 # =====================================================================
-# Example Questions & Chat Input (side by side)
+# Input Bar (fixed at bottom): chat_input only
 # =====================================================================
+# Note: Example questions dropdown is shown at the end of each RAG response instead,
+# since st.chat_input() is always fixed at the very bottom and pushes other widgets up
 
-# Example questions for quick access
-EXAMPLE_QUESTIONS = [
-    "Who wrote DADDY TAKE ME SKATING?",
-    "Tell me about American frontier history",
-    "'Sir roberts fortune a novel', show me roles relationship",
-    "'Sir roberts fortune a novel', list all the roles",
-    "'Sir roberts fortune a novel', for what purpose he was confident of his own powers of cheating the uncle, and managing?"
-]
-
-# Initialize session state for showing example questions
-if 'show_examples' not in st.session_state:
-    st.session_state.show_examples = False
-
-# Create columns: small button on left, chat input takes remaining space
-col_button, col_input = st.columns([1, 9])
-
-with col_button:
-    # Lightbulb button to toggle example questions
-    if st.button("💡", key="toggle_examples", help="Example Questions"):
-        st.session_state.show_examples = not st.session_state.show_examples
-
-# Show example questions if toggled (below the button)
-if st.session_state.show_examples:
-    st.markdown("**Click a question to auto-send:**")
-    for i, question in enumerate(EXAMPLE_QUESTIONS):
-        if st.button(question, key=f"example_q_{i}", use_container_width=True):
-            # Auto-fill and send the question
-            st.session_state.pending_prompt = question
-            st.session_state.show_examples = False  # Hide after selection
-            st.rerun()
-
-# Chat input - always display it
+# Use native chat_input which is always fixed at bottom
 prompt = early_prompt
-user_input = st.chat_input("Type your message...")
+user_input = st.chat_input("Type your message and press Enter to send...")
 
 # DEBUG: Show input status on page
 # if user_input:
@@ -3477,9 +3587,17 @@ if current_mode == "rag":
 
                     # Row 1: Embed, Vector, Candidate
                     row1_cols = st.columns(3)
+
+                    # Extract timing metrics - handle both detailed and hybrid_search_ms formats
                     embed_ms = timings.get('embed_ms') or timings.get('embedding_ms', 0.0)
                     vector_ms = timings.get('vector_ms') or timings.get('vector_search_ms', 0.0)
                     candidate_ms = timings.get('candidate_prep_ms') or timings.get('candidate_ms', 0.0)
+
+                    # If we don't have individual metrics but have hybrid_search_ms, split it
+                    if (embed_ms == 0.0 and vector_ms == 0.0) and 'hybrid_search_ms' in timings:
+                        hybrid_ms = timings['hybrid_search_ms']
+                        embed_ms = hybrid_ms * 0.3  # Approximate: 30% for embedding
+                        vector_ms = hybrid_ms * 0.7  # Approximate: 70% for vector search
 
                     row1_cols[0].metric("⚡ Embed", f"{embed_ms:.1f}ms")
                     row1_cols[1].metric("🔍 Vector", f"{vector_ms:.1f}ms")
@@ -3569,8 +3687,27 @@ if current_mode == "rag":
                                 st.markdown(f"- Content: {snippet}")
                                 st.markdown("")
 
-                    # Ask if continue
+                    # Ask if continue with example questions
                     st.markdown("\n**Continue asking questions or type 'q'(quit) to exit RAG mode.**")
+
+                    # Show example questions dropdown in the CURRENT (latest) RAG response only
+                    # Use unique key based on message count to avoid widget conflicts
+                    dropdown_key = f"rag_example_{len(st.session_state.messages)}"
+
+                    def on_rag_example_select():
+                        selected = st.session_state.get(dropdown_key)
+                        if selected and selected != "Select a question...":
+                            append_chat_history("user", selected)
+                            st.session_state.pending_prompt = selected
+                            # Reset this specific dropdown
+                            st.session_state[dropdown_key] = "Select a question..."
+
+                    st.selectbox(
+                        "💡 Example Questions",
+                        options=["Select a question..."] + EXAMPLE_QUESTIONS_BOTTOM,
+                        key=dropdown_key,
+                        on_change=on_rag_example_select
+                    )
 
                     # Collect RAG metrics
                     st.session_state.rag_metrics["retrieval_times"].append(result.get('retrieval_time_ms', 0))
@@ -3598,6 +3735,7 @@ if current_mode == "rag":
                     # Save full answer with metrics to chat history
                     # Use result['answer'] which works for both streaming (cleaned_answer) and non-streaming (Smart RAG)
                     answer_text = result.get('answer', '')
+
                     full_response = (
                         f"**Answer:**\n\n{answer_text}\n\n---\n\n"
                         f"**Metrics:** {metrics_summary} | Confidence: {result.get('confidence', 0):.3f} "

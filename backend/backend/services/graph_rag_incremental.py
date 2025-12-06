@@ -217,10 +217,11 @@ class IncrementalGraphRAG:
         total_time_ms = (time.time() - start_time) * 1000
         timings['total_ms'] = total_time_ms
         # Fill timing fields expected by UI
-        timings['embed_ms'] = 0.0
+        # Graph RAG doesn't use traditional embedding/reranking, so report JIT and graph query times
+        timings['embed_ms'] = timings.get('entity_extraction_ms', 0.0)  # Entity extraction is like embedding
         timings['vector_ms'] = timings.get('vector_retrieval_ms', 0.0)
-        timings['candidate_prep_ms'] = 0.0
-        timings['rerank_ms'] = 0.0
+        timings['candidate_prep_ms'] = timings.get('jit_build_ms', 0.0) + timings.get('graph_check_ms', 0.0)  # JIT build + graph check
+        timings['rerank_ms'] = timings.get('graph_query_ms', 0.0)  # Graph query is like reranking
         timings['llm_ms'] = timings.get('answer_generation_ms', 0.0)
 
         # Build response
@@ -985,9 +986,20 @@ If the graph shows relationships between entities, explain those connections.
                 'total_tokens': response.usage.total_tokens,
             }
 
+            # Calculate cost using TokenCounter
+            from backend.services.token_counter import get_token_counter, TokenUsage
+            token_counter = get_token_counter()
+            usage_obj = TokenUsage(
+                model=self.generation_model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+            )
+            cost_usd = token_counter.calculate_cost(usage_obj)
+
             return {
                 'answer': answer,
                 'token_usage': token_usage,
+                'token_cost_usd': cost_usd,
             }
 
         except Exception as e:
@@ -995,6 +1007,7 @@ If the graph shows relationships between entities, explain those connections.
             return {
                 'answer': f"I encountered an error generating the answer: {str(e)}",
                 'token_usage': {},
+                'token_cost_usd': 0.0,
             }
 
     def _format_graph_context(self, graph_context: Dict[str, Any]) -> str:

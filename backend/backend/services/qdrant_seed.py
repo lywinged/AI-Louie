@@ -23,10 +23,34 @@ from backend.config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+def _get_default_max_workers() -> int:
+    """Dynamically determine optimal worker count based on CPU cores.
+
+    Uses balanced strategy: ~67% CPU usage, leaving headroom for other programs.
+    Formula: max(4, min(24, cpu_count * 2 // 3))
+
+    Examples:
+    - 4 cores  → 2 workers  (50% usage for low-end systems)
+    - 6 cores  → 4 workers  (67%)
+    - 8 cores  → 5 workers  (63%)
+    - 12 cores → 8 workers  (67%)
+    - 16 cores → 10 workers (63%)
+    - 24+ cores → 16 workers (capped for stability)
+    """
+    try:
+        import multiprocessing
+        cpu_count = multiprocessing.cpu_count()
+        # Balanced formula: use ~67% of CPU cores for I/O-bound seeding
+        # Minimum 4 workers, maximum 24 workers
+        return max(4, min(24, cpu_count * 2 // 3))
+    except Exception:
+        return 6  # Fallback to conservative default
+
+
 DEFAULT_VECTOR_SIZE = int(os.getenv("QDRANT_SEED_VECTOR_SIZE", "1024"))
 DEFAULT_TARGET_COUNT = int(os.getenv("QDRANT_SEED_TARGET_COUNT", "138000"))  # Updated for full corpus
 DEFAULT_BATCH_SIZE = int(os.getenv("QDRANT_SEED_BATCH_SIZE", "200"))
-DEFAULT_MAX_WORKERS = int(os.getenv("QDRANT_SEED_MAX_WORKERS", "4"))  # Parallel upload workers
+DEFAULT_MAX_WORKERS = int(os.getenv("QDRANT_SEED_MAX_WORKERS", str(_get_default_max_workers())))  # Auto-detect CPU cores
 
 _seed_lock = threading.Lock()
 _seed_status: Dict[str, Optional[float]] = {
@@ -272,37 +296,30 @@ def ensure_seed_collection(
         total_batches = len(all_batches)
         logger.info(f"📦 Prepared {total_batches} batches ({batch_size} vectors/batch)")
 
-        # Parallel upload with ThreadPoolExecutor - chunked submission to avoid memory issues
-        chunk_size = max_workers * 10  # Process 10 batches per worker at a time
+        # Parallel upload with ThreadPoolExecutor - submit all batches at once for maximum parallelism
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for chunk_start in range(0, total_batches, chunk_size):
-                chunk_end = min(chunk_start + chunk_size, total_batches)
-                chunk_batches = all_batches[chunk_start:chunk_end]
+            # Submit all batches at once - executor will manage the queue
+            futures = {
+                executor.submit(
+                    _upload_batch_with_progress,
+                    collection_name,
+                    batch,
+                    batch_idx + 1,
+                    total_points,
+                    started_at,
+                ): batch_idx
+                for batch_idx, batch in enumerate(all_batches)
+            }
 
-                # Submit chunk of batches
-                futures = {
-                    executor.submit(
-                        _upload_batch_with_progress,
-                        collection_name,
-                        batch,
-                        chunk_start + batch_idx + 1,
-                        total_points,
-                        started_at,
-                    ): (chunk_start + batch_idx)
-                    for batch_idx, batch in enumerate(chunk_batches)
-                }
-
-                # Wait for chunk to complete
-                for future in as_completed(futures):
-                    batch_num = futures[future]
-                    try:
-                        batch_uploaded = future.result()
-                        uploaded += batch_uploaded
-                    except Exception as exc:
-                        logger.error(f"Batch {batch_num + 1} generated an exception: {exc}")
-                        raise
-
-                logger.info(f"🔄 Chunk progress: {chunk_end}/{total_batches} batches processed")
+            # Process results as they complete
+            for future in as_completed(futures):
+                batch_num = futures[future]
+                try:
+                    batch_uploaded = future.result()
+                    uploaded += batch_uploaded
+                except Exception as exc:
+                    logger.error(f"Batch {batch_num + 1} generated an exception: {exc}")
+                    raise
 
         logger.info(f"✅ All {total_batches} batches uploaded successfully")
 

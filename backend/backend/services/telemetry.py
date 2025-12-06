@@ -34,6 +34,12 @@ try:
 except ImportError as e:
     logger.warning(f"OpenTelemetry not available: {e}")
     OTEL_AVAILABLE = False
+    # Define stub types for when OpenTelemetry is not available
+    Resource = None
+    SERVICE_NAME = None
+    SERVICE_VERSION = None
+    TracerProvider = None
+    MeterProvider = None
 
 
 class TelemetryConfig:

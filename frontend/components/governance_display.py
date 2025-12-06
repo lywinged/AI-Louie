@@ -90,11 +90,14 @@ def display_governance_status(governance_data: Dict):
             else:
                 st.markdown(f"⏳ **{criteria_name}**: Pending...")
 
-        # Summary metrics
-        total_checkpoints = len(checkpoints)
-        passed = len([c for c in checkpoints if c.get("status") == "passed"])
-        failed = len([c for c in checkpoints if c.get("status") == "failed"])
-        warnings = len([c for c in checkpoints if c.get("status") == "warning"])
+        # Summary metrics - count unique criteria (max 12)
+        unique_criteria = set(c.get("criteria") for c in checkpoints)
+        total_checkpoints = len(unique_criteria)
+
+        # Count status by latest checkpoint for each criteria
+        passed = sum(1 for crit in criteria_status.values() if crit[-1]["status"] == "passed")
+        failed = sum(1 for crit in criteria_status.values() if crit[-1]["status"] == "failed")
+        warnings = sum(1 for crit in criteria_status.values() if crit[-1]["status"] == "warning")
 
         st.markdown("---")
         st.markdown(f"**Checkpoints:** {passed}/{total_checkpoints} passed" +
@@ -113,8 +116,18 @@ def display_governance_checkpoints(checkpoints: List[Dict], expanded: bool = Fal
     if not checkpoints:
         return
 
+    # Deduplicate checkpoints - keep only the latest entry for each criteria
+    seen_criteria = {}
+    for checkpoint in checkpoints:
+        criteria = checkpoint.get("criteria", "unknown")
+        # Keep the latest checkpoint for each criteria (later entries override earlier ones)
+        seen_criteria[criteria] = checkpoint
+
+    # Convert back to list and sort by criteria name for consistent display
+    unique_checkpoints = sorted(seen_criteria.values(), key=lambda x: x.get("criteria", ""))
+
     with st.expander("📋 **Governance Checkpoint Log**", expanded=expanded):
-        for i, checkpoint in enumerate(checkpoints):
+        for i, checkpoint in enumerate(unique_checkpoints):
             criteria = checkpoint.get("criteria", "unknown")
             status = checkpoint.get("status", "unknown")
             message = checkpoint.get("message", "")
@@ -132,9 +145,10 @@ def display_governance_checkpoints(checkpoints: List[Dict], expanded: bool = Fal
             else:
                 icon = "⏳"
 
+            # Display full message without truncation
             st.markdown(f"{icon} **{criteria_name}**: {message}")
 
-            if i < len(checkpoints) - 1:
+            if i < len(unique_checkpoints) - 1:
                 st.markdown("")
 
 

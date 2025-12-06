@@ -47,14 +47,31 @@ download_bge_m3() {
         return 0
     fi
 
-    echo "   Downloading from Hugging Face..."
-
     # Create directory if not exists
     mkdir -p "$MODEL_DIR"
 
-    # Download ONNX model
-    # Note: Replace with actual download URL or use huggingface-cli
-    echo -e "${YELLOW}⚠️  Please download manually:${NC}"
+    echo "   Attempting to download from Hugging Face..."
+    echo
+
+    # Try wget first, then curl
+    DOWNLOAD_URL="https://huggingface.co/louielunz/bge-embed/resolve/main/model_int8.onnx"
+
+    if command -v wget >/dev/null 2>&1; then
+        echo "   Using wget..."
+        if wget -O "$MODEL_DIR/model_int8.onnx" "$DOWNLOAD_URL"; then
+            echo -e "${GREEN}✓${NC} Download successful!"
+            return 0
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        echo "   Using curl..."
+        if curl -L -o "$MODEL_DIR/model_int8.onnx" "$DOWNLOAD_URL"; then
+            echo -e "${GREEN}✓${NC} Download successful!"
+            return 0
+        fi
+    fi
+
+    # Fallback to manual instructions
+    echo -e "${YELLOW}⚠️  Automatic download failed. Please download manually:${NC}"
     echo "   1. Visit: https://huggingface.co/BAAI/bge-m3"
     echo "   2. Download the INT8 quantized ONNX model"
     echo "   3. Place in: $MODEL_DIR/model_int8.onnx"
@@ -78,12 +95,31 @@ download_bge_reranker() {
         return 0
     fi
 
-    echo "   Downloading from Hugging Face..."
-
     # Create directory if not exists
     mkdir -p "$MODEL_DIR"
 
-    echo -e "${YELLOW}⚠️  Please download manually:${NC}"
+    echo "   Attempting to download from Hugging Face..."
+    echo
+
+    # Try wget first, then curl
+    DOWNLOAD_URL="https://huggingface.co/louielunz/bge-reranker/resolve/main/model_int8.onnx"
+
+    if command -v wget >/dev/null 2>&1; then
+        echo "   Using wget..."
+        if wget -O "$MODEL_DIR/model_int8.onnx" "$DOWNLOAD_URL"; then
+            echo -e "${GREEN}✓${NC} Download successful!"
+            return 0
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        echo "   Using curl..."
+        if curl -L -o "$MODEL_DIR/model_int8.onnx" "$DOWNLOAD_URL"; then
+            echo -e "${GREEN}✓${NC} Download successful!"
+            return 0
+        fi
+    fi
+
+    # Fallback to manual instructions
+    echo -e "${YELLOW}⚠️  Automatic download failed. Please download manually:${NC}"
     echo "   1. Visit: https://huggingface.co/BAAI/bge-reranker-base"
     echo "   2. Download the INT8 quantized ONNX model"
     echo "   3. Place in: $MODEL_DIR/model_int8.onnx"
