@@ -996,7 +996,7 @@ If the graph shows relationships between entities, explain those connections.
                 total_tokens=response.usage.total_tokens,
                 timestamp=datetime.now(),
             )
-            cost_usd = token_counter.calculate_cost(usage_obj)
+            cost_usd = token_counter.estimate_cost(usage_obj)
 
             return {
                 'answer': answer,
