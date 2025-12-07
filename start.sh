@@ -523,13 +523,15 @@ else
     WARMUP_ENABLED=$(echo "$WARMUP_STATUS" | grep -o '"enabled":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
     WARMUP_DONE=$(echo "$WARMUP_STATUS" | grep -o '"done":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
     WARMUP_STARTED=$(echo "$WARMUP_STATUS" | grep -o '"started":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
+    WARMUP_TOTAL=$(echo "$WARMUP_STATUS" | grep -o '"total":[0-9]*' | grep -o '[0-9]*' || echo "0")
+    WARMUP_COMPLETED=$(echo "$WARMUP_STATUS" | grep -o '"completed":[0-9]*' | grep -o '[0-9]*' || echo "0")
 
     WARMUP_ELAPSED=$(($(date +%s) - WARMUP_START_TIME))
 
     # Check if warm-up is complete
     if [[ "$WARMUP_DONE" == "true" ]]; then
       echo
-      echo "   ✅ Warm-up complete! Bandit is ready"
+      echo "   ✅ Warm-up complete! Bandit is ready (${WARMUP_COMPLETED}/${WARMUP_TOTAL} queries)"
       break
     fi
 
@@ -548,8 +550,12 @@ else
       break
     fi
 
-    # Show spinner
-    printf "\r   ${SPIN_CHARS:$SPIN_INDEX:1} Warming up bandit (backend)... ${WARMUP_ELAPSED}s elapsed"
+    # Show spinner with progress
+    if [[ "$WARMUP_TOTAL" -gt 0 ]]; then
+      printf "\r   ${SPIN_CHARS:$SPIN_INDEX:1} Warming up bandit... ${WARMUP_COMPLETED}/${WARMUP_TOTAL} queries | ${WARMUP_ELAPSED}s elapsed"
+    else
+      printf "\r   ${SPIN_CHARS:$SPIN_INDEX:1} Warming up bandit (backend)... ${WARMUP_ELAPSED}s elapsed"
+    fi
     SPIN_INDEX=$(( (SPIN_INDEX + 1) % ${#SPIN_CHARS} ))
 
     sleep $WARMUP_CHECK_INTERVAL
