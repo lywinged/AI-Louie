@@ -390,10 +390,10 @@ echo_hr
 echo "⏳ Waiting for Qdrant Collection Seeding"
 echo_hr
 COLLECTION_NAME="${QDRANT_COLLECTION:-assessment_docs_minilm}"
-MAX_WAIT=300  # Maximum 5 minutes wait (for large parallel seeding)
+MAX_WAIT=600  # Maximum 10 minutes wait (for large parallel seeding)
 WAIT_INTERVAL=5
 EXPECTED_VECTORS=150000  # Expected vector count for 150 books
-MIN_STABLE_VECTORS=10000  # Minimum vectors before checking stability
+MIN_STABLE_VECTORS=140000  # Wait for ~93% completion (140k/150k) before stability check
 STABLE_CHECKS_NEEDED=4  # Number of consecutive stable checks (20s)
 
 echo "Collection: ${COLLECTION_NAME}"
