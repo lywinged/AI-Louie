@@ -390,15 +390,18 @@ echo_hr
 echo "⏳ Waiting for Qdrant Collection Seeding"
 echo_hr
 COLLECTION_NAME="${QDRANT_COLLECTION:-assessment_docs_minilm}"
-MAX_WAIT=120  # Maximum 2 minutes wait
+MAX_WAIT=300  # Maximum 5 minutes wait (for large parallel seeding)
 WAIT_INTERVAL=5
-EXPECTED_VECTORS=15000  # Approximate expected vector count
+EXPECTED_VECTORS=150000  # Expected vector count for 150 books
+MIN_STABLE_VECTORS=10000  # Minimum vectors before checking stability
+STABLE_CHECKS_NEEDED=4  # Number of consecutive stable checks (20s)
 
 echo "Collection: ${COLLECTION_NAME}"
 echo "Checking every ${WAIT_INTERVAL}s (max ${MAX_WAIT}s)..."
 echo
 
 PREV_COUNT=0
+STABLE_COUNT=0
 START_TIME=$(date +%s)
 
 for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
@@ -423,8 +426,13 @@ for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
     if [[ $PREV_COUNT -gt 0 && $VECTOR_COUNT -gt $PREV_COUNT ]]; then
       RATE=$(( (VECTOR_COUNT - PREV_COUNT) / WAIT_INTERVAL ))
       RATE_STR="${RATE} vectors/sec"
+      STABLE_COUNT=0  # Reset stability counter when still growing
+    elif [[ $PREV_COUNT -gt 0 ]]; then
+      RATE_STR="stable"
+      STABLE_COUNT=$((STABLE_COUNT + 1))
     else
       RATE_STR="calculating..."
+      STABLE_COUNT=0
     fi
 
     # Clear line and show progress
@@ -432,10 +440,12 @@ for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
 
     PREV_COUNT=$VECTOR_COUNT
 
-    # Check if seeding is complete (no new vectors in last 2 checks)
-    if [[ $i -gt 2 ]] && [[ $VECTOR_COUNT -eq $PREV_COUNT ]]; then
+    # Check if seeding is complete:
+    # 1. Must have minimum number of vectors (avoid false positives)
+    # 2. Must be stable for STABLE_CHECKS_NEEDED consecutive checks
+    if [[ $VECTOR_COUNT -ge $MIN_STABLE_VECTORS ]] && [[ $STABLE_COUNT -ge $STABLE_CHECKS_NEEDED ]]; then
       echo
-      echo "   ✅ Seeding complete! Collection has ${VECTOR_COUNT} vectors"
+      echo "   ✅ Seeding complete! Collection has ${VECTOR_COUNT} vectors (stable for ${STABLE_COUNT}x${WAIT_INTERVAL}s)"
       break
     fi
 
