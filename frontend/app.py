@@ -523,17 +523,24 @@ Best for: Character relationships, entity connections, "who knows whom" queries.
 Best for: Comparison queries, data listing, structured information extraction."""
     }
 
+    # Get current index for selected strategy
+    current_strategy_index = list(strategy_options.keys()).index(st.session_state.rag_strategy)
+
     selected_strategy_label = target.selectbox(
         "RAG Strategy",
         options=list(strategy_options.values()),
-        index=list(strategy_options.keys()).index(st.session_state.rag_strategy),
+        index=current_strategy_index,
         help="Choose which RAG pipeline to use. Select a strategy to see detailed description below.",
         key="rag_strategy_selector"
     )
 
     # Reverse map to get strategy key
     reverse_strategy_map = {v: k for k, v in strategy_options.items()}
-    st.session_state.rag_strategy = reverse_strategy_map[selected_strategy_label]
+    new_strategy = reverse_strategy_map[selected_strategy_label]
+
+    # Only update if changed to avoid unnecessary reruns
+    if new_strategy != st.session_state.rag_strategy:
+        st.session_state.rag_strategy = new_strategy
 
     # Display detailed description for selected strategy
     current_strategy = st.session_state.rag_strategy
@@ -552,17 +559,24 @@ Best for: Comparison queries, data listing, structured information extraction.""
         "system_only": "📚 System Data Only"
     }
 
+    # Get current index for selected scope
+    current_scope_index = list(scope_options.keys()).index(st.session_state.search_scope)
+
     selected_scope_label = target.selectbox(
         "Search Scope",
         options=list(scope_options.values()),
-        index=list(scope_options.keys()).index(st.session_state.search_scope),
+        index=current_scope_index,
         help="Choose which data sources to search",
         key="search_scope_selector"
     )
 
     # Reverse map to get scope key
     reverse_scope_map = {v: k for k, v in scope_options.items()}
-    st.session_state.search_scope = reverse_scope_map[selected_scope_label]
+    new_scope = reverse_scope_map[selected_scope_label]
+
+    # Only update if changed to avoid unnecessary reruns
+    if new_scope != st.session_state.search_scope:
+        st.session_state.search_scope = new_scope
 
     target.caption(f"Searching: {st.session_state.search_scope}")
 
