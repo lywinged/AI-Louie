@@ -383,6 +383,53 @@ else
 fi
 
 # ===========================
+# Step 5b: Wait for Qdrant seeding to complete
+# ===========================
+echo
+echo "Checking Qdrant collection seeding status..."
+COLLECTION_NAME="${QDRANT_COLLECTION:-assessment_docs_minilm}"
+MAX_WAIT=120  # Maximum 2 minutes wait
+WAIT_INTERVAL=5
+
+for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
+  # Check if collection exists and has vectors
+  COLLECTION_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
+  VECTOR_COUNT=$(echo "$COLLECTION_INFO" | grep -o '"vectors_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
+
+  if [[ "$VECTOR_COUNT" -gt 0 ]]; then
+    echo "   ✅ Qdrant collection '${COLLECTION_NAME}' ready with ${VECTOR_COUNT} vectors"
+    break
+  else
+    if [[ $i -eq 1 ]]; then
+      echo "   ⏳ Waiting for Qdrant to seed collection '${COLLECTION_NAME}'..."
+      echo "      This may take 30-120 seconds depending on your system..."
+    fi
+    echo "      Attempt $i/$((MAX_WAIT/WAIT_INTERVAL)): Collection has ${VECTOR_COUNT} vectors, waiting ${WAIT_INTERVAL}s..."
+    sleep $WAIT_INTERVAL
+  fi
+done
+
+# Final check
+FINAL_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
+FINAL_COUNT=$(echo "$FINAL_INFO" | grep -o '"vectors_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
+
+if [[ "$FINAL_COUNT" -eq 0 ]]; then
+  echo
+  echo "   ⚠️  WARNING: Qdrant collection '${COLLECTION_NAME}' has no vectors after ${MAX_WAIT}s"
+  echo "      The RAG system may not work properly!"
+  echo "      Check backend logs: docker-compose logs backend"
+  echo
+  read -p "   Continue anyway? (y/N): " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "   Exiting. Please check logs and try again."
+    exit 1
+  fi
+else
+  echo "   ✅ Ready to use! Collection has ${FINAL_COUNT} vectors"
+fi
+
+# ===========================
 # Step 6: Optional Smart RAG bandit warm-up (requires backend to be up)
 # ===========================
 if [[ "${WARM_SMART_RAG:-0}" == "1" ]]; then
