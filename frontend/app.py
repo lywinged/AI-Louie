@@ -526,21 +526,24 @@ Best for: Comparison queries, data listing, structured information extraction.""
     # Get current index for selected strategy
     current_strategy_index = list(strategy_options.keys()).index(st.session_state.rag_strategy)
 
-    selected_strategy_label = target.selectbox(
+    # Define callback for strategy selection
+    def on_strategy_change():
+        selected_label = st.session_state.get("rag_strategy_selector")
+        if selected_label:
+            reverse_strategy_map = {v: k for k, v in strategy_options.items()}
+            new_strategy = reverse_strategy_map[selected_label]
+            # Only update if different
+            if new_strategy != st.session_state.rag_strategy:
+                st.session_state.rag_strategy = new_strategy
+
+    target.selectbox(
         "RAG Strategy",
         options=list(strategy_options.values()),
         index=current_strategy_index,
         help="Choose which RAG pipeline to use. Select a strategy to see detailed description below.",
-        key="rag_strategy_selector"
+        key="rag_strategy_selector",
+        on_change=on_strategy_change
     )
-
-    # Reverse map to get strategy key
-    reverse_strategy_map = {v: k for k, v in strategy_options.items()}
-    new_strategy = reverse_strategy_map[selected_strategy_label]
-
-    # Only update if changed to avoid unnecessary reruns
-    if new_strategy != st.session_state.rag_strategy:
-        st.session_state.rag_strategy = new_strategy
 
     # Display detailed description for selected strategy
     current_strategy = st.session_state.rag_strategy
