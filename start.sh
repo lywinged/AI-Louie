@@ -500,67 +500,61 @@ echo_hr
 echo "🎯 Checking Smart RAG Bandit Warm-up Status"
 echo_hr
 
-# Check if warm-up is needed by querying backend
+# Always check backend API status (don't rely on cached files)
 WARMUP_MAX_WAIT=180  # Maximum 3 minutes wait for warm-up
 WARMUP_CHECK_INTERVAL=3
 WARMUP_START_TIME=$(date +%s)
 
-# Quick check if weights already exist (skip wait)
-if [[ -f "cache/smart_bandit_state.json" ]] || [[ -f "config/default_bandit_state.json" ]]; then
-  echo "   ✅ Bandit weights found - warm-up not needed"
-  echo "      Using existing state file"
-else
-  echo "   Waiting for backend to complete warm-up..."
-  echo "   (Backend automatically runs warm-up on first start)"
-  echo
+echo "   Waiting for backend to complete warm-up..."
+echo "   (Backend automatically runs warm-up on first start)"
+echo
 
-  SPIN_CHARS="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-  SPIN_INDEX=0
+SPIN_CHARS="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+SPIN_INDEX=0
 
-  while true; do
-    # Query backend for warm-up status
-    WARMUP_STATUS=$(curl -s "http://localhost:${BACKEND_PORT}/api/rag/smart-status" 2>/dev/null || echo "{}")
-    WARMUP_ENABLED=$(echo "$WARMUP_STATUS" | grep -o '"enabled":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
-    WARMUP_DONE=$(echo "$WARMUP_STATUS" | grep -o '"done":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
-    WARMUP_STARTED=$(echo "$WARMUP_STATUS" | grep -o '"started":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
-    WARMUP_TOTAL=$(echo "$WARMUP_STATUS" | grep -o '"total":[0-9]*' | grep -o '[0-9]*' || echo "0")
-    WARMUP_COMPLETED=$(echo "$WARMUP_STATUS" | grep -o '"completed":[0-9]*' | grep -o '[0-9]*' || echo "0")
+while true; do
+  # Query backend for warm-up status
+  WARMUP_STATUS=$(curl -s "http://localhost:${BACKEND_PORT}/api/rag/smart-status" 2>/dev/null || echo "{}")
+  WARMUP_ENABLED=$(echo "$WARMUP_STATUS" | grep -o '"enabled":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
+  WARMUP_DONE=$(echo "$WARMUP_STATUS" | grep -o '"done":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
+  WARMUP_STARTED=$(echo "$WARMUP_STATUS" | grep -o '"started":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
+  WARMUP_TOTAL=$(echo "$WARMUP_STATUS" | grep -o '"total":[0-9]*' | grep -o '[0-9]*' || echo "0")
+  WARMUP_COMPLETED=$(echo "$WARMUP_STATUS" | grep -o '"completed":[0-9]*' | grep -o '[0-9]*' || echo "0")
 
-    WARMUP_ELAPSED=$(($(date +%s) - WARMUP_START_TIME))
+  WARMUP_ELAPSED=$(($(date +%s) - WARMUP_START_TIME))
 
-    # Check if warm-up is complete
-    if [[ "$WARMUP_DONE" == "true" ]]; then
-      echo
-      echo "   ✅ Warm-up complete! Bandit is ready (${WARMUP_COMPLETED}/${WARMUP_TOTAL} queries)"
-      break
-    fi
+  # Check if warm-up is complete
+  if [[ "$WARMUP_DONE" == "true" ]]; then
+    echo
+    echo "   ✅ Warm-up complete! Bandit is ready (${WARMUP_COMPLETED}/${WARMUP_TOTAL} queries)"
+    break
+  fi
 
-    # Check if warm-up is disabled
-    if [[ "$WARMUP_ENABLED" == "false" ]]; then
-      echo
-      echo "   ℹ️  Warm-up disabled - skipping"
-      break
-    fi
+  # Check if warm-up is disabled
+  if [[ "$WARMUP_ENABLED" == "false" ]]; then
+    echo
+    echo "   ℹ️  Warm-up disabled - skipping"
+    break
+  fi
 
-    # Check timeout
-    if [[ $WARMUP_ELAPSED -ge $WARMUP_MAX_WAIT ]]; then
-      echo
-      echo "   ⚠️  Warm-up timeout after ${WARMUP_MAX_WAIT}s - continuing anyway"
-      echo "      Bandit will use default weights"
-      break
-    fi
+  # Check timeout
+  if [[ $WARMUP_ELAPSED -ge $WARMUP_MAX_WAIT ]]; then
+    echo
+    echo "   ⚠️  Warm-up timeout after ${WARMUP_MAX_WAIT}s - continuing anyway"
+    echo "      Bandit will use default weights"
+    break
+  fi
 
-    # Show spinner with progress
-    if [[ "$WARMUP_TOTAL" -gt 0 ]]; then
-      printf "\r   ${SPIN_CHARS:$SPIN_INDEX:1} Warming up bandit... ${WARMUP_COMPLETED}/${WARMUP_TOTAL} queries | ${WARMUP_ELAPSED}s elapsed"
-    else
-      printf "\r   ${SPIN_CHARS:$SPIN_INDEX:1} Warming up bandit (backend)... ${WARMUP_ELAPSED}s elapsed"
-    fi
-    SPIN_INDEX=$(( (SPIN_INDEX + 1) % ${#SPIN_CHARS} ))
+  # Show spinner with progress
+  if [[ "$WARMUP_TOTAL" -gt 0 ]]; then
+    printf "\r   ${SPIN_CHARS:$SPIN_INDEX:1} Warming up bandit... ${WARMUP_COMPLETED}/${WARMUP_TOTAL} queries | ${WARMUP_ELAPSED}s elapsed"
+  else
+    printf "\r   ${SPIN_CHARS:$SPIN_INDEX:1} Warming up bandit (backend)... ${WARMUP_ELAPSED}s elapsed"
+  fi
+  SPIN_INDEX=$(( (SPIN_INDEX + 1) % ${#SPIN_CHARS} ))
 
-    sleep $WARMUP_CHECK_INTERVAL
-  done
-fi
+  sleep $WARMUP_CHECK_INTERVAL
+done
 
 # ===========================
 # Step 7: Summary
