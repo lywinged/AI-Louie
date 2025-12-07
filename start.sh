@@ -581,3 +581,47 @@ echo "Ready! If the browser didn't open, visit:"
 echo "   Frontend: $FRONTEND_URL"
 echo "   Grafana:  $GRAFANA_URL"
 echo_hr
+
+# ===========================
+# Step 9: Auto-shutdown monitoring
+# ===========================
+# Cleanup function - runs docker-compose down when script exits
+cleanup() {
+  echo
+  echo_hr
+  echo "🛑 Shutting down AI-Louie platform..."
+  echo_hr
+
+  # Stop all containers gracefully
+  if command -v docker-compose >/dev/null 2>&1; then
+    docker-compose down
+  else
+    docker compose down
+  fi
+
+  echo "✅ All services stopped successfully"
+  echo_hr
+}
+
+# Register cleanup function to run on script termination
+# Triggers on: Ctrl+C (SIGINT), kill command (SIGTERM), or normal exit
+trap cleanup EXIT INT TERM
+
+echo
+echo "💡 Press Ctrl+C to stop all services and exit"
+echo
+
+# Monitor frontend container - exit if it stops
+echo "Monitoring frontend container..."
+FRONTEND_CONTAINER="frontend-ui"
+
+while true; do
+  # Check if frontend container is still running
+  if ! docker ps --format '{{.Names}}' | grep -q "^${FRONTEND_CONTAINER}$"; then
+    echo
+    echo "⚠️  Frontend container stopped - triggering shutdown..."
+    exit 0
+  fi
+
+  sleep 5
+done
