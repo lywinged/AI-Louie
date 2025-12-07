@@ -125,6 +125,7 @@ class PlanResponse(BaseModel):
     )
     llm_cost_usd: Optional[float] = Field(default=None, description="Estimated LLM cost in USD for planning")
     learning: Optional[Dict[str, Any]] = Field(None, description="Learning system feedback with reward and breakdown")
+    governance_context: Optional[Dict[str, Any]] = Field(None, description="AI Governance tracking context")
 
 
 class AgentMetrics(BaseModel):

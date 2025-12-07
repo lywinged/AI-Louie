@@ -17,6 +17,7 @@ from openai import AsyncOpenAI
 from backend.models.chat_schemas import ChatMessage, ChatResponse
 from backend.services.llm_tracker import get_llm_tracker
 from backend.utils.openai import sanitize_messages
+from backend.services.unified_llm_metrics import get_unified_metrics
 from backend.services.metrics import (
     llm_request_counter,
     llm_token_usage_counter,
@@ -103,12 +104,21 @@ class ChatService:
 
         try:
             # Call OpenAI
-            response = await self.client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.model_name,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=2000,
-            )
+                endpoint="chat_service"
+            ) as tracker:
+                response = await self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=2000,
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             # Extract response
             assistant_message = response.choices[0].message.content
@@ -116,9 +126,10 @@ class ChatService:
 
             # Calculate metrics
             duration = time.time() - start_time
-            prompt_tokens = response.usage.prompt_tokens
-            completion_tokens = response.usage.completion_tokens
-            total_tokens = response.usage.total_tokens
+            usage = response.usage
+            prompt_tokens = usage.prompt_tokens
+            completion_tokens = usage.completion_tokens
+            total_tokens = usage.total_tokens
 
             # Calculate cost (gpt-4o-mini pricing)
             # Input: $2.50 / 1M tokens, Output: $10.00 / 1M tokens

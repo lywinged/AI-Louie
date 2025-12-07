@@ -35,6 +35,7 @@ from backend.services.onnx_inference import (
 from backend.services.query_classifier import get_query_classifier, QueryDifficulty
 from backend.services.qdrant_client import ensure_collection, get_qdrant_client
 from backend.services.token_counter import get_token_counter, TokenUsage
+from backend.services.unified_llm_metrics import get_unified_metrics
 from backend.utils.text_splitter import split_text
 from backend.utils.openai import sanitize_messages
 from backend.services.metrics import (
@@ -810,18 +811,31 @@ Format your response as:
         message_prep_ms = (time.perf_counter() - message_prep_start) * 1000
         logger.info(f"⏱️ Message Preparation Time: {message_prep_ms:.2f}ms")
 
+        # Track LLM call with UnifiedLLMMetrics
+        unified_metrics = get_unified_metrics()
         api_call_start = time.perf_counter()
-        response = await client.chat.completions.create(
+
+        async with unified_metrics.track_llm_call(
             model=model,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=500
-        )
+            endpoint="rag_generation"
+        ) as tracker:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=500
+            )
+
+            # Set context for tracking
+            tracker["messages"] = messages
+            tracker["completion"] = response.choices[0].message.content
+            logger.info(f"[DEBUG] Setting LLM tracking context: messages={len(messages)}, completion_len={len(response.choices[0].message.content)}")
+
         api_call_ms = (time.perf_counter() - api_call_start) * 1000
         logger.info(f"⏱️ LLM API Call Time: {api_call_ms:.2f}ms (model: {model})")
 
         answer = response.choices[0].message.content.strip()
-        usage = getattr(response, "usage", None)
+        usage = response.usage  # Extract usage from response
         if usage:
             usage_dict = {
                 "prompt": usage.prompt_tokens,
@@ -936,25 +950,36 @@ Format your response as:
             {"role": "user", "content": prompt}
         ])
 
-        # Create streaming request
-        stream = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=500,
-            stream=True  # Enable streaming
-        )
+        # Track LLM call with UnifiedLLMMetrics for streaming
+        unified_metrics = get_unified_metrics()
 
-        # Stream chunks as they arrive
-        full_content = ""
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                content = chunk.choices[0].delta.content
-                full_content += content
-                yield {
-                    "type": "content",
-                    "data": content
-                }
+        async with unified_metrics.track_llm_call(
+            model=model,
+            endpoint="rag_generation_stream"
+        ) as tracker:
+            # Create streaming request
+            stream = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=500,
+                stream=True  # Enable streaming
+            )
+
+            # Stream chunks as they arrive
+            full_content = ""
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    full_content += content
+                    yield {
+                        "type": "content",
+                        "data": content
+                    }
+
+            # Set context for tracking (required for metrics to be recorded)
+            tracker["messages"] = messages
+            tracker["completion"] = full_content
 
         # After streaming completes, send metadata
         # Note: OpenAI doesn't provide usage in streaming mode, so we estimate

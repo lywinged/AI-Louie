@@ -22,6 +22,7 @@ import os
 import structlog
 from openai import AsyncOpenAI
 from qdrant_client import QdrantClient
+from backend.services.unified_llm_metrics import get_unified_metrics
 
 logger = structlog.get_logger(__name__)
 
@@ -266,15 +267,25 @@ Respond in JSON:
 }}
 """
 
-            response = await self.openai_client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.extraction_model,
-                messages=[
+                endpoint="table_rag_intent_extraction"
+            ) as tracker:
+                messages = [
                     {"role": "system", "content": "You are a query analyzer that extracts structured intent."},
                     {"role": "user", "content": prompt}
-                ],
-                temperature=0.0,
-                max_tokens=300,
-            )
+                ]
+                response = await self.openai_client.chat.completions.create(
+                    model=self.extraction_model,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=300,
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
 
@@ -510,15 +521,25 @@ Create a table with appropriate headers and rows. Return JSON:
 """
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.extraction_model,
-                messages=[
+                endpoint="table_rag_data_structuring"
+            ) as tracker:
+                messages = [
                     {"role": "system", "content": "You are a data structuring assistant."},
                     {"role": "user", "content": prompt}
-                ],
-                temperature=0.0,
-                max_tokens=800,
-            )
+                ]
+                response = await self.openai_client.chat.completions.create(
+                    model=self.extraction_model,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=800,
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
 
@@ -658,18 +679,28 @@ Provide a clear, structured answer. If the table has data, reference it in your 
 """
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.generation_model,
-                messages=[
+                endpoint="table_rag_answer_generation"
+            ) as tracker:
+                messages = [
                     {
                         "role": "system",
                         "content": "You are a helpful assistant that provides clear, structured answers based on table data."
                     },
                     {"role": "user", "content": prompt}
-                ],
-                temperature=0.0,
-                max_tokens=800,
-            )
+                ]
+                response = await self.openai_client.chat.completions.create(
+                    model=self.generation_model,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=800,
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             answer = response.choices[0].message.content.strip()
 

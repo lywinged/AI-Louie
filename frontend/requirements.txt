@@ -9,6 +9,7 @@ pandas==2.1.3
 httpx==0.25.2
 requests==2.31.0
 pydantic==2.5.0
+sseclient-py==1.8.0  # For Server-Sent Events streaming
 
 # Utilities
 python-dotenv==1.0.0

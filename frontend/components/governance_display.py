@@ -71,7 +71,13 @@ def display_governance_status(governance_data: Dict):
             criteria_status[criteria].append({"status": status, "message": message})
 
         # Display criteria with status
-        for criteria in active_criteria:
+        # Show all criteria that have checkpoints (not just active_criteria)
+        all_criteria_with_checkpoints = set(criteria_status.keys())
+
+        # Also include active_criteria that haven't had checkpoints yet
+        all_criteria = all_criteria_with_checkpoints.union(set(active_criteria))
+
+        for criteria in sorted(all_criteria):
             criteria_name = criteria.replace("_", " ").title()
 
             # Get status for this criteria

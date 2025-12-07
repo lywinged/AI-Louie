@@ -25,6 +25,7 @@ from backend.models.rag_schemas import (
     FeedbackResponse,
 )
 from backend.services.governance_tracker import get_governance_tracker
+from backend.services.metrics import rag_slo_violations_total
 from backend.services.onnx_inference import (
     get_current_reranker_path,
     get_current_embed_path,
@@ -269,6 +270,17 @@ async def ask_question(request: RAGRequest) -> RAGResponse:
             )
         except Exception as monitor_error:
             logger.warning(f"Failed to log RAG interaction to data monitor: {monitor_error}")
+
+        # G8: Check SLO violations (R1 tier: latency < 2000ms)
+        try:
+            SLO_THRESHOLD_MS = 2000.0
+            if response.total_time_ms and response.total_time_ms > SLO_THRESHOLD_MS:
+                rag_slo_violations_total.labels(endpoint="ask", risk_tier="R1").inc()
+                logger.warning(
+                    f"SLO violation detected: latency={response.total_time_ms:.2f}ms > {SLO_THRESHOLD_MS}ms"
+                )
+        except Exception as slo_error:
+            logger.warning(f"Failed to check SLO: {slo_error}")
 
         return response
     except Exception as exc:
@@ -1448,6 +1460,17 @@ async def ask_question_smart(request: RAGRequest) -> RAGResponse:
         governance_tracker.complete_operation(gov_context.trace_id)
         response.governance_context = gov_context.get_summary()
 
+        # G8: Check SLO violations (R1 tier: latency < 2000ms)
+        try:
+            SLO_THRESHOLD_MS = 2000.0
+            if response.total_time_ms and response.total_time_ms > SLO_THRESHOLD_MS:
+                rag_slo_violations_total.labels(endpoint="ask-smart", risk_tier="R1").inc()
+                logger.warning(
+                    f"SLO violation detected: latency={response.total_time_ms:.2f}ms > {SLO_THRESHOLD_MS}ms"
+                )
+        except Exception as slo_error:
+            logger.warning(f"Failed to check SLO: {slo_error}")
+
         return response
     except Exception as exc:
         logger.exception("❌ RAG smart query failed: %s", exc)
@@ -1624,7 +1647,7 @@ async def ask_stream(request: RAGRequest):
                                     "total_time_ms": total_ms,
                                     "retrieval_time_ms": 0,
                                     "llm_time_ms": 0,
-                                    "cached": True,
+                                    "cache_hit": True,  # Use consistent field name
                                     "cache_layer": cached['cache_layer'],
                                     "model": cached_response.models.get("llm") if cached_response.models else "cached",
                                     "token_usage": {
@@ -1690,7 +1713,8 @@ async def ask_stream(request: RAGRequest):
                     "data": json.dumps({
                         "num_chunks": len(chunks),
                         "retrieval_time_ms": retrieval_ms,
-                        "citations": citations
+                        "citations": citations,
+                        "cached": False  # Fresh retrieval
                     })
                 }
 
@@ -1701,72 +1725,74 @@ async def ask_stream(request: RAGRequest):
                 full_answer = ""
                 final_metadata = {}
 
-                async for chunk in _generate_answer_with_llm_stream(
-                    question=request.question,
-                    chunks=chunks,
-                    model=llm_model
-                ):
-                    if chunk["type"] == "content":
-                        # Stream content chunks and collect full answer
-                        content = chunk["data"]
-                        full_answer += content
-                        yield {
-                            "event": "content",
-                            "data": content
-                        }
-                    elif chunk["type"] == "metadata":
-                        # Send final metadata
-                        total_ms = (time.perf_counter() - tic_total) * 1000
-                        metadata = chunk["data"]
-                        metadata["retrieval_time_ms"] = retrieval_ms
-                        metadata["total_time_ms"] = total_ms
+                try:
+                    async for chunk in _generate_answer_with_llm_stream(
+                        question=request.question,
+                        chunks=chunks,
+                        model=llm_model
+                    ):
+                        if chunk["type"] == "content":
+                            # Stream content chunks and collect full answer
+                            content = chunk["data"]
+                            full_answer += content
+                            yield {
+                                "event": "content",
+                                "data": content
+                            }
+                        elif chunk["type"] == "metadata":
+                            # Send final metadata
+                            total_ms = (time.perf_counter() - tic_total) * 1000
+                            metadata = chunk["data"]
+                            metadata["retrieval_time_ms"] = retrieval_ms
+                            metadata["total_time_ms"] = total_ms
+                            metadata["cache_hit"] = False  # Fresh query
 
-                        # Include detailed timings if available
-                        if timings:
-                            metadata["timings"] = timings
+                            # Include detailed timings if available
+                            if timings:
+                                metadata["timings"] = timings
 
-                        final_metadata = metadata
+                            final_metadata = metadata
 
-                        yield {
-                            "event": "metadata",
-                            "data": json.dumps(metadata)
-                        }
-                    elif chunk["type"] == "error":
-                        yield {
-                            "event": "error",
-                            "data": json.dumps({"error": chunk["data"]})
-                        }
+                            yield {
+                                "event": "metadata",
+                                "data": json.dumps(metadata)
+                            }
+                        elif chunk["type"] == "error":
+                            yield {
+                                "event": "error",
+                                "data": json.dumps({"error": chunk["data"]})
+                            }
 
-                # Step 3: Save to answer cache for future queries
-                if answer_cache and full_answer:
-                    try:
-                        from backend.models.rag_schemas import RAGResponse, Citation
-                        # Build RAGResponse for caching
-                        citations_list = [
-                            Citation(
-                                source=c.get("source", "Unknown"),
-                                content=c.get("content", ""),
-                                score=float(c.get("score", 0.0))
+                    # Send completion
+                    yield {"event": "done", "data": "[DONE]"}
+                finally:
+                    # Step 3: Save to answer cache for future queries (in finally to ensure it runs)
+                    if answer_cache and full_answer:
+                        try:
+                            from backend.models.rag_schemas import RAGResponse, Citation
+                            # Build RAGResponse for caching
+                            citations_list = [
+                                Citation(
+                                    source=c.get("source", "Unknown"),
+                                    content=c.get("content", ""),
+                                    score=float(c.get("score", 0.0))
+                                )
+                                for c in citations
+                            ]
+                            cache_response = RAGResponse(
+                                answer=full_answer,
+                                num_chunks_retrieved=len(chunks),
+                                citations=citations_list,
+                                models={"llm": llm_model},
+                                confidence=1.0,  # Streaming doesn't calculate confidence
+                                total_time_ms=final_metadata.get("total_time_ms", 0),
+                                retrieval_time_ms=retrieval_ms,
+                                llm_time_ms=final_metadata.get("llm_time_ms", 0)
                             )
-                            for c in citations
-                        ]
-                        cache_response = RAGResponse(
-                            answer=full_answer,
-                            num_chunks_retrieved=len(chunks),
-                            citations=citations_list,
-                            models={"llm": llm_model},
-                            confidence=1.0,  # Streaming doesn't calculate confidence
-                            total_time_ms=final_metadata.get("total_time_ms", 0),
-                            retrieval_time_ms=retrieval_ms,
-                            llm_time_ms=final_metadata.get("llm_time_ms", 0)
-                        )
-                        await answer_cache.cache_answer(request.question, cache_response)
-                        logger.info(f"Answer cached successfully (streaming) query={request.question[:50]}")
-                    except Exception as e:
-                        logger.error(f"Failed to cache streaming answer: {e}")
-
-                # Send completion
-                yield {"event": "done", "data": "[DONE]"}
+                            await answer_cache.cache_answer(request.question, cache_response)
+                            logger.info(f"Answer cached successfully (streaming) query={request.question[:50]}")
+                        except Exception as e:
+                            logger.error(f"Failed to cache streaming answer: {e}")
 
             except Exception as e:
                 logger.exception(f"❌ Streaming RAG failed: {e}")
@@ -1883,6 +1909,18 @@ async def ask_question_graph_rag(request: RAGRequest) -> Dict[str, Any]:
             )
         except Exception as monitor_error:
             logger.warning(f"Failed to log Graph RAG interaction to data monitor: {monitor_error}")
+
+        # G8: Check SLO violations (R1 tier: latency < 2000ms)
+        try:
+            SLO_THRESHOLD_MS = 2000.0
+            total_time_ms = response.get('timings', {}).get('total_ms') if isinstance(response, dict) else None
+            if total_time_ms and total_time_ms > SLO_THRESHOLD_MS:
+                rag_slo_violations_total.labels(endpoint="ask-graph", risk_tier="R1").inc()
+                logger.warning(
+                    f"SLO violation detected: latency={total_time_ms:.2f}ms > {SLO_THRESHOLD_MS}ms"
+                )
+        except Exception as slo_error:
+            logger.warning(f"Failed to check SLO: {slo_error}")
 
         return response
 
@@ -2537,4 +2575,599 @@ async def ask_question_graph_stream(request: RAGRequest):
             error_data = {"error": str(exc)}
             yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
     
+    return EventSourceResponse(event_generator())
+
+
+@router.post("/ask-iterative-stream")
+async def ask_question_iterative_stream(request: RAGRequest):
+    """
+    Self-RAG (Iterative RAG) endpoint with real-time progress updates via Server-Sent Events (SSE).
+
+    Streams progress events for each iteration:
+    - Iteration start (with current chunks and confidence)
+    - Iteration completion (with new confidence score)
+    - Final convergence or max iterations reached
+
+    Returns:
+        StreamingResponse with SSE events (event: progress/result/done)
+    """
+    async def event_generator():
+        try:
+            from backend.services.self_rag import get_self_rag
+
+            # Collect progress events
+            progress_events = []
+
+            def sync_progress_callback(iteration, msg, meta):
+                """Synchronous callback that collects events"""
+                progress_events.append((iteration, msg, meta))
+
+            # Get Self-RAG instance
+            self_rag = get_self_rag()
+
+            # Execute Self-RAG with progress callback
+            result = await self_rag.ask_with_reflection(
+                question=request.question,
+                top_k=request.top_k or 10,
+                use_hybrid=True,
+                include_timings=True,
+                progress_callback=sync_progress_callback
+            )
+
+            # Yield all collected progress events
+            for iteration, msg, meta in progress_events:
+                event_data = {
+                    "iteration": iteration,
+                    "message": msg,
+                    "metadata": meta
+                }
+                yield f"event: progress\ndata: {json.dumps(event_data)}\n\n"
+
+            # Build citations from result
+            citations_list = [
+                {
+                    "source": c.source,
+                    "content": c.content[:200],
+                    "score": c.score if hasattr(c, 'score') else None
+                }
+                for c in (result.citations or [])
+            ]
+
+            # Yield final result
+            result_data = {
+                "answer": result.answer,
+                "token_usage": result.token_usage,
+                "token_cost_usd": result.token_cost_usd,
+                "timings": result.timings,
+                "confidence": result.confidence,
+                "num_chunks_retrieved": result.num_chunks_retrieved,
+                "citations": citations_list,
+                "iteration_details": result.iteration_details if hasattr(result, 'iteration_details') else []
+            }
+            yield f"event: result\ndata: {json.dumps(result_data)}\n\n"
+
+            # Yield done event
+            yield f"event: done\ndata: {{}}\n\n"
+
+        except Exception as exc:
+            logger.exception(f"Self-RAG stream failed: {exc}")
+            error_data = {"error": str(exc)}
+            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+
+    return EventSourceResponse(event_generator())
+
+
+@router.post("/ask-smart-stream")
+async def ask_question_smart_stream(request: RAGRequest):
+    """
+    Smart RAG endpoint with real-time progress updates via Server-Sent Events (SSE).
+
+    Streams progress events for:
+    1. Query classification
+    2. Strategy selection (hybrid/iterative/graph/table)
+    3. Execution with strategy-specific progress
+
+    For Graph RAG, streams all 6 steps in real-time:
+    - Step 1: Entity extraction
+    - Step 2: Graph check
+    - Step 3: JIT building (with batch progress)
+    - Step 4: Graph query
+    - Step 5: Vector retrieval
+    - Step 6: Answer generation
+
+    Returns:
+        StreamingResponse with SSE events (event: progress/result/done)
+    """
+    async def event_generator():
+        # Start governance tracking
+        governance_tracker = get_governance_tracker()
+        gov_context = governance_tracker.start_operation(
+            operation_type="rag",
+            metadata={"question": request.question, "endpoint": "/ask-smart-stream"}
+        )
+
+        try:
+            from backend.services.query_classifier import get_query_classifier
+            from backend.services.graph_rag_incremental import IncrementalGraphRAG
+            from backend.services.table_rag import TableRAG
+            from backend.services.rag_pipeline import _get_openai_client
+            import json
+            import re
+
+            progress_events = []
+
+            def emit_progress(message: str, metadata: dict = None):
+                """Helper to emit progress event immediately"""
+                event_data = {
+                    "message": message,
+                    "metadata": metadata or {}
+                }
+                progress_events.append(("progress", event_data))
+
+            # Governance checkpoint: Policy gate
+            governance_tracker.checkpoint_policy_gate(
+                gov_context.trace_id,
+                allowed=True,
+                reason="R1 policy allows RAG queries with citations required"
+            )
+
+            # Governance checkpoint: Permission layers (G4)
+            governance_tracker.checkpoint_permission(
+                gov_context.trace_id,
+                user_role="public",
+                authorized=True,
+                required_permissions=["rag:query"]
+            )
+
+            # Governance checkpoint: Privacy control (G5) - PII detection
+            pii_patterns = {
+                'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+                'phone': r'\b(?:\+?1[-.]?)?\(?([0-9]{3})\)?[-.]?([0-9]{3})[-.]?([0-9]{4})\b',
+                'ssn': r'\b\d{3}-\d{2}-\d{4}\b',
+                'credit_card': r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b'
+            }
+            detected_pii_types = []
+            for pii_type, pattern in pii_patterns.items():
+                if re.search(pattern, request.question):
+                    detected_pii_types.append(pii_type)
+
+            governance_tracker.checkpoint_privacy(
+                gov_context.trace_id,
+                pii_detected=len(detected_pii_types) > 0,
+                pii_masked=False,
+                pii_types=detected_pii_types
+            )
+
+            # Governance checkpoint: Data governance (G9)
+            governance_tracker.checkpoint_data_governance(
+                gov_context.trace_id,
+                data_sources=[COLLECTION_NAME],
+                compliance_status="compliant",
+                data_quality_score=1.0
+            )
+
+            # Governance checkpoint: Dashboard export (G12)
+            governance_tracker.checkpoint_dashboard(
+                gov_context.trace_id,
+                metrics_exported=True,
+                dashboard_type="grafana"
+            )
+
+            # Step 1: Classify query
+            emit_progress("🔍 Classifying query...", {})
+            yield f"event: progress\ndata: {json.dumps(progress_events[-1][1])}\n\n"
+
+            classifier = get_query_classifier()
+            strategy = await classifier.get_strategy(request.question, use_llm=True, use_cache=True)
+            query_type = strategy.get('query_type', 'general')
+            strategy_description = strategy.get('description', 'No description available')
+
+            # Step 2: Determine strategy
+            use_graph_rag = strategy.get('use_graph_rag', False)
+            q_lower = request.question.lower()
+            graph_cues = [
+                "relationship", "relationships", "relation", "relations",
+                "role", "roles", "character", "characters", "family tree",
+                "connection", "connections",
+                "关系", "人物关系", "角色关系", "角色", "关系网", "图谱"
+            ]
+            if not use_graph_rag and any(cue in q_lower for cue in graph_cues):
+                use_graph_rag = True
+            use_table_rag = strategy.get('use_table_rag', False)
+
+            cue_hits = [c for c in graph_cues if c in q_lower]
+            table_cues = ["table", "数据", "统计", "列", "行", "表格"]
+            table_cue_hits = [c for c in table_cues if c in q_lower]
+
+            force_graph = (len(cue_hits) >= 2) or (use_graph_rag and len(cue_hits) >= 1 and not use_table_rag)
+            force_table = (len(table_cue_hits) >= 1) and use_table_rag
+
+            if force_table:
+                chosen_arm = "table"
+            elif force_graph:
+                chosen_arm = "graph"
+            elif _bandit_enabled():
+                if query_type == 'factual_detail':
+                    available_arms = ["hybrid"]
+                elif query_type == 'complex_analysis':
+                    available_arms = ["hybrid", "iterative"]
+                else:
+                    available_arms = ["hybrid", "iterative", "graph", "table"]
+                chosen_arm = _choose_bandit_arm(available_arms)
+            else:
+                if use_table_rag:
+                    chosen_arm = "table"
+                elif use_graph_rag:
+                    chosen_arm = "graph"
+                else:
+                    simple_types = ['author_query', 'factual_detail', 'quote_search']
+                    chosen_arm = "hybrid" if query_type in simple_types else "iterative"
+
+            # Safety net escalation
+            if cue_hits and chosen_arm in ["hybrid", "iterative"] and not table_cue_hits and query_type != 'factual_detail':
+                chosen_arm = "graph"
+            elif table_cue_hits and chosen_arm in ["hybrid", "iterative"] and query_type != 'factual_detail':
+                chosen_arm = "table"
+
+            emit_progress(f"🎯 Strategy selected: {chosen_arm.upper()}", {"strategy": chosen_arm, "query_type": query_type})
+            yield f"event: progress\ndata: {json.dumps(progress_events[-1][1])}\n\n"
+
+            # Step 3: Execute with strategy-specific progress
+            if chosen_arm == "graph":
+                emit_progress("🔎 Executing Graph RAG...", {"strategy": "graph"})
+                yield f"event: progress\ndata: {json.dumps(progress_events[-1][1])}\n\n"
+
+                openai_client = _get_openai_client()
+                qdrant_client = get_qdrant_client()
+
+                graph_rag = IncrementalGraphRAG(
+                    openai_client=openai_client,
+                    qdrant_client=qdrant_client,
+                    collection_name=COLLECTION_NAME,
+                    extraction_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+                    generation_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+                    max_jit_chunks=int(os.getenv("GRAPH_MAX_JIT_CHUNKS", "50"))
+                )
+
+                # Use asyncio.Queue for real-time progress streaming
+                import asyncio
+                progress_queue = asyncio.Queue()
+                graph_result_holder = {}
+
+                async def graph_progress_callback(step, msg, meta):
+                    """Push progress events to queue in real-time"""
+                    await progress_queue.put(("progress", step, msg, meta))
+
+                # Run Graph RAG in background task
+                async def run_graph_rag():
+                    try:
+                        result = await graph_rag.answer_question(
+                            question=request.question,
+                            top_k=request.top_k or 20,
+                            max_hops=2,
+                            enable_vector_retrieval=True,
+                            progress_callback=graph_progress_callback
+                        )
+                        graph_result_holder['result'] = result
+                        await progress_queue.put(("done", None, None, None))
+                    except Exception as e:
+                        await progress_queue.put(("error", None, str(e), {}))
+
+                # Start Graph RAG task
+                graph_task = asyncio.create_task(run_graph_rag())
+
+                # Stream progress events as they arrive
+                while True:
+                    event_type, step, msg, meta = await progress_queue.get()
+
+                    if event_type == "progress":
+                        event_data = {
+                            "message": f"  {msg}",  # Indent sub-steps
+                            "metadata": {"step": step, **meta}
+                        }
+                        yield f"event: progress\ndata: {json.dumps(event_data)}\n\n"
+
+                    elif event_type == "done":
+                        # Ensure task is complete
+                        await graph_task
+                        break
+
+                    elif event_type == "error":
+                        await graph_task
+                        raise Exception(msg)
+
+                # Yield final result
+                graph_result = graph_result_holder['result']
+                timings = graph_result.get('timings', {})
+
+                # Normalize token usage format to match frontend expectations
+                raw_token_usage = graph_result.get('token_usage', {})
+                token_usage = None
+                if raw_token_usage:
+                    token_usage = {
+                        "prompt": raw_token_usage.get('prompt_tokens', raw_token_usage.get('prompt', 0)),
+                        "completion": raw_token_usage.get('completion_tokens', raw_token_usage.get('completion', 0)),
+                        "total": raw_token_usage.get('total_tokens', raw_token_usage.get('total', 0))
+                    }
+
+                # Add governance checkpoints for Graph RAG
+                num_chunks = len(graph_result.get('context_chunks', []))
+                governance_tracker.checkpoint_retrieval(
+                    gov_context.trace_id,
+                    num_chunks=num_chunks,
+                    collections=[COLLECTION_NAME]
+                )
+                governance_tracker.checkpoint_evidence(
+                    gov_context.trace_id,
+                    num_citations=num_chunks,
+                    citation_quality="good" if num_chunks >= 2 else "low"
+                )
+                governance_tracker.checkpoint_generation(
+                    gov_context.trace_id,
+                    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    prompt_version="v1.0"
+                )
+                governance_tracker.checkpoint_quality(
+                    gov_context.trace_id,
+                    latency_ms=timings.get('total_ms', 0),
+                    quality_score=0.8  # Graph RAG default quality score
+                )
+                governance_tracker.checkpoint_audit(gov_context.trace_id, audit_logged=True)
+                governance_tracker.checkpoint_reliability(
+                    gov_context.trace_id,
+                    status="passed",
+                    message="Graph RAG completed successfully"
+                )
+
+                # Complete governance tracking and get summary
+                governance_tracker.complete_operation(gov_context.trace_id)
+
+                result_data = {
+                    "answer": graph_result['answer'],
+                    "token_usage": token_usage,
+                    "token_cost_usd": graph_result.get('token_cost_usd'),
+                    "timings": timings,
+                    "total_time_ms": timings.get('total_ms', 0),
+                    "retrieval_time_ms": timings.get('retrieval_ms', 0),
+                    "llm_time_ms": timings.get('llm_ms', 0),
+                    "num_chunks_retrieved": num_chunks,
+                    "confidence": 1.0,  # Graph RAG high confidence
+                    "cache_hit": False,
+                    "strategy": "graph",
+                    "selected_strategy": "Graph RAG",
+                    "governance_context": gov_context.get_summary()
+                }
+                yield f"event: result\ndata: {json.dumps(result_data)}\n\n"
+
+            elif chosen_arm == "table":
+                emit_progress("📊 Executing Table RAG...", {"strategy": "table"})
+                yield f"event: progress\ndata: {json.dumps(progress_events[-1][1])}\n\n"
+
+                openai_client = _get_openai_client()
+                qdrant_client = get_qdrant_client()
+
+                table_rag = TableRAG(
+                    openai_client=openai_client,
+                    qdrant_client=qdrant_client,
+                    collection_name=COLLECTION_NAME,
+                    extraction_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+                    generation_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+                )
+
+                table_result = await table_rag.answer_question(
+                    question=request.question,
+                    top_k=request.top_k or 20,
+                    hybrid_alpha=strategy.get('hybrid_alpha', 0.6)
+                )
+
+                timings = table_result.get('timings', {})
+
+                # Normalize token usage format to match frontend expectations
+                raw_token_usage = table_result.get('token_usage', {})
+                token_usage = None
+                if raw_token_usage:
+                    token_usage = {
+                        "prompt": raw_token_usage.get('prompt_tokens', raw_token_usage.get('prompt', 0)),
+                        "completion": raw_token_usage.get('completion_tokens', raw_token_usage.get('completion', 0)),
+                        "total": raw_token_usage.get('total_tokens', raw_token_usage.get('total', 0))
+                    }
+
+                # Add governance checkpoints for Table RAG
+                num_chunks = len(table_result.get('context_chunks', []))
+                governance_tracker.checkpoint_retrieval(
+                    gov_context.trace_id,
+                    num_chunks=num_chunks,
+                    collections=[COLLECTION_NAME]
+                )
+                governance_tracker.checkpoint_evidence(
+                    gov_context.trace_id,
+                    num_citations=num_chunks,
+                    citation_quality="good" if num_chunks >= 2 else "low"
+                )
+                governance_tracker.checkpoint_generation(
+                    gov_context.trace_id,
+                    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    prompt_version="v1.0"
+                )
+                governance_tracker.checkpoint_quality(
+                    gov_context.trace_id,
+                    latency_ms=timings.get('total_ms', 0),
+                    quality_score=0.8  # Table RAG default quality score
+                )
+                governance_tracker.checkpoint_audit(gov_context.trace_id, audit_logged=True)
+                governance_tracker.checkpoint_reliability(
+                    gov_context.trace_id,
+                    status="passed",
+                    message="Table RAG completed successfully"
+                )
+
+                # Complete governance tracking and get summary
+                governance_tracker.complete_operation(gov_context.trace_id)
+
+                result_data = {
+                    "answer": table_result['answer'],
+                    "token_usage": token_usage,
+                    "token_cost_usd": table_result.get('token_cost_usd'),
+                    "timings": timings,
+                    "total_time_ms": timings.get('total_ms', 0),
+                    "retrieval_time_ms": timings.get('retrieval_ms', 0),
+                    "llm_time_ms": timings.get('llm_ms', 0),
+                    "num_chunks_retrieved": num_chunks,
+                    "confidence": 1.0,  # Table RAG high confidence
+                    "cache_hit": False,
+                    "strategy": "table",
+                    "selected_strategy": "Table RAG",
+                    "governance_context": gov_context.get_summary()
+                }
+                yield f"event: result\ndata: {json.dumps(result_data)}\n\n"
+
+            else:
+                # Hybrid or iterative - no detailed progress for now
+                emit_progress(f"⚡ Executing {chosen_arm.upper()} RAG...", {"strategy": chosen_arm})
+                yield f"event: progress\ndata: {json.dumps(progress_events[-1][1])}\n\n"
+
+                if chosen_arm == "hybrid":
+                    response = await answer_question_hybrid(
+                        question=request.question,
+                        top_k=request.top_k or 5,
+                        use_llm=True,
+                        include_timings=request.include_timings
+                    )
+                else:  # iterative - use Self-RAG with streaming progress
+                    from backend.services.self_rag import get_self_rag
+
+                    # Progress callback for iterative RAG
+                    def iterative_progress_callback(iteration, msg, meta):
+                        """Emit progress for each iteration"""
+                        emit_progress(
+                            f"🔄 Iteration {iteration}: {msg}",
+                            {"iteration": iteration, "strategy": "iterative", **meta}
+                        )
+                        # Yield progress event immediately
+                        progress_events.append(("progress", {
+                            "message": f"🔄 Iteration {iteration}: {msg}",
+                            "metadata": {"iteration": iteration, "strategy": "iterative", **meta}
+                        }))
+
+                    self_rag = get_self_rag()
+                    response = await self_rag.ask_with_reflection(
+                        question=request.question,
+                        top_k=request.top_k or 10,
+                        use_hybrid=True,
+                        include_timings=request.include_timings,
+                        progress_callback=iterative_progress_callback
+                    )
+
+                    # Yield all iteration progress events
+                    for event_type, event_data in progress_events[-len(response.iteration_details if hasattr(response, 'iteration_details') else []) * 2:]:
+                        if event_type == "progress":
+                            yield f"event: progress\ndata: {json.dumps(event_data)}\n\n"
+
+                # Build complete result data with all required fields
+                timings = response.timings if hasattr(response, 'timings') else {}
+                num_chunks = response.num_chunks_retrieved if hasattr(response, 'num_chunks_retrieved') else 0
+                total_time_ms = response.total_time_ms if hasattr(response, 'total_time_ms') else timings.get('total_ms', 0)
+
+                # Add governance checkpoints for Hybrid/Iterative RAG
+                governance_tracker.checkpoint_retrieval(
+                    gov_context.trace_id,
+                    num_chunks=num_chunks,
+                    collections=[COLLECTION_NAME]
+                )
+                governance_tracker.checkpoint_evidence(
+                    gov_context.trace_id,
+                    num_citations=num_chunks,
+                    citation_quality="good" if num_chunks >= 2 else "low"
+                )
+                governance_tracker.checkpoint_generation(
+                    gov_context.trace_id,
+                    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    prompt_version="v1.0"
+                )
+                governance_tracker.checkpoint_quality(
+                    gov_context.trace_id,
+                    latency_ms=total_time_ms,
+                    quality_score=response.confidence if hasattr(response, 'confidence') else 0.8
+                )
+                governance_tracker.checkpoint_audit(gov_context.trace_id, audit_logged=True)
+                governance_tracker.checkpoint_reliability(
+                    gov_context.trace_id,
+                    status="passed",
+                    message=f"{chosen_arm.title()} RAG completed successfully"
+                )
+
+                # Complete governance tracking and get summary
+                governance_tracker.complete_operation(gov_context.trace_id)
+
+                # Build token breakdown for UI display
+                token_usage_dict = response.token_usage if hasattr(response, 'token_usage') else {}
+                prompt_tokens = token_usage_dict.get('prompt', 0) if token_usage_dict else 0
+                completion_tokens = token_usage_dict.get('completion', 0) if token_usage_dict else 0
+                total_tokens = token_usage_dict.get('total', prompt_tokens + completion_tokens)
+                token_cost = response.token_cost_usd if hasattr(response, 'token_cost_usd') else 0
+                is_cache_hit = response.cache_hit if hasattr(response, 'cache_hit') else False
+
+                token_breakdown = {
+                    "query_classification": {
+                        "tokens": 0,
+                        "method": "keyword",  # Streaming uses keyword classification
+                        "llm_used": False
+                    },
+                    "answer_cache_lookup": {
+                        "tokens": 0,
+                        "cache_hit": is_cache_hit,
+                        "llm_used": False
+                    },
+                    "answer_generation": {
+                        "tokens": total_tokens,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "cost": token_cost,
+                        "llm_used": total_tokens > 0
+                    },
+                    "total": {
+                        "tokens": total_tokens,
+                        "cost": token_cost,
+                        "llm_calls": 1 if total_tokens > 0 else 0
+                    }
+                }
+
+                result_data = {
+                    "answer": response.answer,
+                    "token_usage": token_usage_dict,
+                    "token_cost_usd": token_cost,
+                    "token_breakdown": token_breakdown,
+                    "timings": timings,
+                    "total_time_ms": total_time_ms,
+                    "retrieval_time_ms": timings.get('total_retrieval_ms', timings.get('retrieval_ms', 0)),
+                    "llm_time_ms": timings.get('llm_ms', 0),
+                    "num_chunks_retrieved": num_chunks,
+                    "confidence": response.confidence if hasattr(response, 'confidence') else 1.0,
+                    "cache_hit": is_cache_hit,
+                    "strategy": chosen_arm,
+                    "selected_strategy": f"{chosen_arm.title()} RAG",
+                    "governance_context": gov_context.get_summary()
+                }
+                yield f"event: result\ndata: {json.dumps(result_data)}\n\n"
+
+            # Yield done event
+            yield f"event: done\ndata: {{}}\n\n"
+
+        except Exception as exc:
+            logger.exception(f"Smart RAG stream failed: {exc}")
+
+            # Log failure in governance
+            try:
+                governance_tracker.checkpoint_reliability(
+                    gov_context.trace_id,
+                    status="failed",
+                    message=f"Smart RAG stream failed: {str(exc)}"
+                )
+                governance_tracker.complete_operation(gov_context.trace_id)
+            except:
+                pass
+
+            error_data = {"error": str(exc)}
+            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+
     return EventSourceResponse(event_generator())

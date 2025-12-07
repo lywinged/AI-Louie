@@ -232,11 +232,23 @@ async def answer_question_hybrid(
                 )
                 # 直接返回缓存答案，跳过所有 RAG 流程！
                 cached_response = cached['answer']
-                # Ensure cache hits show zero token usage/cost
-                cached_response.token_usage = None
-                cached_response.token_cost_usd = 0.0
+                # Preserve original token usage from cache metadata if available
+                cached_metadata = cached.get('metadata', {})
+                cached_response.token_usage = cached_metadata.get('token_usage')
+                cached_response.token_cost_usd = cached_metadata.get('cost_usd', 0.0)
                 cached_response.cache_hit = True
                 cached_response.llm_used = False
+
+                # Set timing fields from cache lookup time
+                cache_time_ms = cached.get('time_ms', 0.0)
+                cached_response.retrieval_time_ms = 0.0
+                cached_response.llm_time_ms = 0.0
+                cached_response.total_time_ms = cache_time_ms
+                if not cached_response.timings:
+                    cached_response.timings = {}
+                cached_response.timings['cache_lookup_ms'] = cache_time_ms
+                cached_response.timings['total_ms'] = cache_time_ms
+
                 cached_response.token_breakdown = {
                     "query_classification": {
                         "tokens": 0,
@@ -607,7 +619,9 @@ async def answer_question_hybrid(
                         'retrieval_ms': retrieval_ms,
                         'llm_ms': llm_time_ms,
                         'num_chunks': len(chunks),
-                        'top_confidence': top_confidence
+                        'top_confidence': top_confidence,
+                        'token_usage': token_usage,
+                        'cost_usd': token_cost_usd
                     }
                 )
                 logger.info(

@@ -21,6 +21,7 @@ from backend.models.code_schemas import (
 )
 from backend.services.token_counter import get_token_counter, TokenUsage
 from backend.utils.openai import sanitize_messages
+from backend.services.unified_llm_metrics import get_unified_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -334,12 +335,21 @@ Return ONLY the code, no explanations."""
             {"role": "user", "content": user_prompt}
         ])
 
-        response = await self.client.chat.completions.create(
+        unified_metrics = get_unified_metrics()
+        async with unified_metrics.track_llm_call(
             model=self.model_name,
-            messages=messages,
-            temperature=0.3,  # Low temperature for code generation
-            max_tokens=2000
-        )
+            endpoint="code_assistant"
+        ) as tracker:
+            response = await self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=0.3,  # Low temperature for code generation
+                max_tokens=2000
+            )
+
+            # Set context for tracking (REQUIRED for metrics to be recorded)
+            tracker["messages"] = messages
+            tracker["completion"] = response.choices[0].message.content
 
         code = response.choices[0].message.content.strip()
 
@@ -423,12 +433,21 @@ Please fix the code to make all tests pass. Return ONLY the corrected code, no e
             {"role": "user", "content": user_prompt}
         ])
 
-        response = await self.client.chat.completions.create(
+        unified_metrics = get_unified_metrics()
+        async with unified_metrics.track_llm_call(
             model=self.model_name,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=2000
-        )
+            endpoint="code_assistant"
+        ) as tracker:
+            response = await self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=2000
+            )
+
+            # Set context for tracking (REQUIRED for metrics to be recorded)
+            tracker["messages"] = messages
+            tracker["completion"] = response.choices[0].message.content
 
         code = response.choices[0].message.content.strip()
         code = self._extract_code_from_markdown(code)
@@ -488,15 +507,25 @@ Please respond in JSON with the following keys:
 """
 
         try:
-            response = await self.client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.model_name,
-                messages=[
+                endpoint="code_assistant"
+            ) as tracker:
+                messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                max_tokens=600,
-            )
+                ]
+                response = await self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=600,
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
             json_text = self._extract_json_block(content)
@@ -545,15 +574,25 @@ Please respond in JSON with the following keys:
 """
 
         try:
-            response = await self.client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.model_name,
-                messages=[
+                endpoint="code_assistant"
+            ) as tracker:
+                messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                max_tokens=400,
-            )
+                ]
+                response = await self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=400,
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
             json_text = self._extract_json_block(content)
@@ -659,7 +698,7 @@ Please respond in JSON with the following keys:
                 ['python', '-m', 'pytest', temp_file, '-v', '-s'],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=20
             )
 
             execution_time_ms = (time.time() - start_time) * 1000
@@ -696,7 +735,7 @@ Please respond in JSON with the following keys:
             return TestResult(
                 passed=False,
                 stdout="",
-                stderr="Test execution timed out (>10s)",
+                stderr="Test execution timed out (>20s)",
                 exit_code=124,
                 execution_time_ms=(time.time() - start_time) * 1000
             )
@@ -943,7 +982,7 @@ edition = "2021"
                 ['bash', temp_file],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=20
             )
 
             execution_time_ms = (time.time() - start_time) * 1000
@@ -1108,12 +1147,21 @@ Keep it conversational and user-friendly!"""
             messages = [{"role": "user", "content": prompt}]
             messages = sanitize_messages(messages)
 
-            response = await self.client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.model_name,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=300
-            )
+                endpoint="code_assistant"
+            ) as tracker:
+                response = await self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=300
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             explanation = response.choices[0].message.content.strip()
             logger.info(f"✅ Generated explanation ({len(explanation)} chars)")

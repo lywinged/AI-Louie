@@ -2,7 +2,12 @@
   "dashboard": {
     "title": "AI Governance Dashboard",
     "description": "Comprehensive AI Governance Monitoring for AI-Louie System",
-    "tags": ["ai", "governance", "compliance", "ai-louie"],
+    "tags": [
+      "ai",
+      "governance",
+      "compliance",
+      "ai-louie"
+    ],
     "timezone": "browser",
     "editable": true,
     "graphTooltip": 1,
@@ -13,7 +18,9 @@
         "icon": "doc",
         "url": "http://localhost:8888/docs",
         "tooltip": "View Backend API Documentation",
-        "tags": ["backend"],
+        "tags": [
+          "backend"
+        ],
         "targetBlank": true
       },
       {
@@ -22,7 +29,9 @@
         "icon": "dashboard",
         "url": "http://localhost:8888/metrics",
         "tooltip": "View Raw Prometheus Metrics",
-        "tags": ["metrics"],
+        "tags": [
+          "metrics"
+        ],
         "targetBlank": true
       },
       {
@@ -31,19 +40,26 @@
         "icon": "external link",
         "url": "http://localhost:8501",
         "tooltip": "Open Streamlit Frontend",
-        "tags": ["frontend"],
+        "tags": [
+          "frontend"
+        ],
         "targetBlank": true
       }
     ],
     "panels": [
       {
         "id": 100,
-        "title": "🎯 Quick Actions",
+        "title": "\ud83c\udfaf Quick Actions",
         "type": "text",
-        "gridPos": {"h": 3, "w": 24, "x": 0, "y": 0},
+        "gridPos": {
+          "h": 3,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
         "options": {
           "mode": "html",
-          "content": "<div style=\"padding: 8px 15px; text-align: center; background: #f8f9fa; border-radius: 6px;\">\n  <div style=\"display: flex; align-items: center; justify-content: space-between;\">\n    <span style=\"font-size: 16px; font-weight: 600; color: #1f77b4; margin-right: 15px;\">🛡️ AI Governance</span>\n    <div style=\"display: flex; gap: 10px;\">\n      <a href=\"http://localhost:8888/docs\" target=\"_blank\" style=\"display: inline-block; padding: 8px 18px; background: #1f77b4; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; white-space: nowrap;\">📚 API Docs</a>\n      <a href=\"http://localhost:8888/metrics\" target=\"_blank\" style=\"display: inline-block; padding: 8px 18px; background: #ff7f0e; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; white-space: nowrap;\">📊 Metrics</a>\n      <a href=\"http://localhost:8501\" target=\"_blank\" style=\"display: inline-block; padding: 8px 18px; background: #2ca02c; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; white-space: nowrap;\">🖥️ Frontend</a>\n      <a href=\"http://localhost:3000/d/ai-governance-dashboard\" style=\"display: inline-block; padding: 8px 18px; background: #d62728; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; white-space: nowrap;\">🔄 Refresh</a>\n    </div>\n    <span style=\"font-size: 13px; color: #28a745; margin-left: 15px; white-space: nowrap;\">✅ 12/12 Active</span>\n  </div>\n</div>",
+          "content": "\n<div style=\"text-align: center; margin-bottom: 8px;\">\n    <div style=\"display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center;\">\n        <a href=\"/d/system-overview\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">System Overview</a> <a href=\"/d/llm-metrics\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">LLM Metrics</a> <a href=\"/d/rag-performance\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">RAG Performance</a> <a href=\"/d/drift-monitoring\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">Drift Monitoring</a> <a href=\"/d/alerts-overview\" style=\"padding: 8px 16px; background: #1f1f1f; color: #33b5e5; border-radius: 4px; text-decoration: none; margin: 0 4px; display: inline-block; border: 1px solid #3274D9; transition: all 0.2s;\" onmouseover=\"this.style.background='#3274D9'; this.style.color='white';\" onmouseout=\"this.style.background='#1f1f1f'; this.style.color='#33b5e5';\">Alerts Overview</a> <span style=\"padding: 8px 16px; background: #3274D9; color: white; border-radius: 4px; font-weight: bold; margin: 0 4px;\">AI Governance</span>\n    </div>\n</div>\n",
           "code": {
             "language": "plaintext",
             "showLineNumbers": false,
@@ -53,7 +69,7 @@
       },
       {
         "id": 1,
-        "title": "📈 Governance Checkpoints by Status",
+        "title": "\ud83d\udcc8 Governance Checkpoints by Status",
         "type": "timeseries",
         "datasource": {
           "type": "prometheus",
@@ -68,24 +84,41 @@
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "palette-classic"},
+            "color": {
+              "mode": "palette-classic"
+            },
             "custom": {
               "lineWidth": 2,
               "fillOpacity": 10,
-              "showPoints": "auto"
+              "showPoints": "auto",
+              "axisPlacement": "auto"
             },
             "unit": "ops"
           }
         },
         "options": {
-          "tooltip": {"mode": "multi"},
-          "legend": {"displayMode": "table", "placement": "right", "calcs": ["last", "mean"]}
+          "tooltip": {
+            "mode": "multi"
+          },
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "calcs": [
+              "last",
+              "mean"
+            ]
+          }
         },
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 6
+        }
       },
       {
         "id": 2,
-        "title": "🎯 Governance Compliance Rate",
+        "title": "\ud83c\udfaf Governance Compliance Rate",
         "type": "gauge",
         "datasource": {
           "type": "prometheus",
@@ -106,9 +139,18 @@
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 0.7, "color": "yellow"},
-                {"value": 0.9, "color": "green"}
+                {
+                  "value": 0,
+                  "color": "red"
+                },
+                {
+                  "value": 0.7,
+                  "color": "yellow"
+                },
+                {
+                  "value": 0.9,
+                  "color": "green"
+                }
               ]
             },
             "unit": "percentunit",
@@ -121,11 +163,16 @@
           "showThresholdLabels": true,
           "showThresholdMarkers": true
         },
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 6
+        }
       },
       {
         "id": 3,
-        "title": "🥧 AI Operations by Risk Tier",
+        "title": "\ud83e\udd67 AI Operations by Risk Tier",
         "type": "piechart",
         "datasource": {
           "type": "prometheus",
@@ -140,23 +187,43 @@
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "palette-classic"},
+            "color": {
+              "mode": "palette-classic"
+            },
             "custom": {
-              "hideFrom": {"tooltip": false, "viz": false, "legend": false}
+              "hideFrom": {
+                "tooltip": false,
+                "viz": false,
+                "legend": false
+              }
             },
             "unit": "short"
           }
         },
         "options": {
-          "legend": {"displayMode": "table", "placement": "right", "values": ["value", "percent"]},
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "values": [
+              "value",
+              "percent"
+            ]
+          },
           "pieType": "pie",
-          "tooltip": {"mode": "single"}
+          "tooltip": {
+            "mode": "single"
+          }
         },
-        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 14}
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 14
+        }
       },
       {
         "id": 4,
-        "title": "⚡ Operation Latency (P95)",
+        "title": "\u26a1 Operation Latency (P95)",
         "type": "timeseries",
         "datasource": {
           "type": "prometheus",
@@ -171,32 +238,59 @@
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "palette-classic"},
+            "color": {
+              "mode": "palette-classic"
+            },
             "custom": {
               "lineWidth": 2,
               "fillOpacity": 10,
-              "showPoints": "auto"
+              "showPoints": "auto",
+              "axisPlacement": "auto"
             },
             "unit": "s",
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 2, "color": "yellow"},
-                {"value": 5, "color": "red"}
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 2,
+                  "color": "yellow"
+                },
+                {
+                  "value": 5,
+                  "color": "red"
+                }
               ]
             }
           }
         },
         "options": {
-          "tooltip": {"mode": "multi"},
-          "legend": {"displayMode": "table", "placement": "right", "calcs": ["last", "mean", "max"]}
+          "tooltip": {
+            "mode": "multi"
+          },
+          "legend": {
+            "displayMode": "table",
+            "placement": "right",
+            "calcs": [
+              "last",
+              "mean",
+              "max"
+            ]
+          }
         },
-        "gridPos": {"h": 8, "w": 16, "x": 8, "y": 14}
+        "gridPos": {
+          "h": 8,
+          "w": 16,
+          "x": 8,
+          "y": 14
+        }
       },
       {
         "id": 12,
-        "title": "📝 G3 Evidence Contract",
+        "title": "\ud83d\udcdd G3 Evidence Contract",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -205,35 +299,65 @@
         "targets": [
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g3_evidence_contract\",status=\"passed\"})",
-            "legendFormat": "✅ Logged",
+            "legendFormat": "\u2705 Logged",
             "refId": "A"
           },
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g3_evidence_contract\",status=\"failed\"})",
-            "legendFormat": "❌ Failed",
+            "legendFormat": "\u274c Failed",
             "refId": "B"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 1, "color": "red"}
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 1,
+                  "color": "red"
+                }
               ]
             },
             "unit": "short"
           },
           "overrides": [
             {
-              "matcher": {"id": "byName", "options": "✅ Logged"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u2705 Logged"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "green"
+                  }
+                }
+              ]
             },
             {
-              "matcher": {"id": "byName", "options": "❌ Failed"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u274c Failed"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "red"
+                  }
+                }
+              ]
             }
           ]
         },
@@ -244,15 +368,22 @@
           "orientation": "auto",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 22}
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 22
+        }
       },
       {
         "id": 5,
-        "title": "🔐 G4 Permission Checks",
+        "title": "\ud83d\udd10 G4 Permission Checks",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -261,35 +392,65 @@
         "targets": [
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g4_permission_layers\",status=\"passed\"})",
-            "legendFormat": "✅ Passed",
+            "legendFormat": "\u2705 Passed",
             "refId": "A"
           },
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g4_permission_layers\",status=\"failed\"})",
-            "legendFormat": "❌ Failed",
+            "legendFormat": "\u274c Failed",
             "refId": "B"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 1, "color": "red"}
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 1,
+                  "color": "red"
+                }
               ]
             },
             "unit": "short"
           },
           "overrides": [
             {
-              "matcher": {"id": "byName", "options": "✅ Passed"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u2705 Passed"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "green"
+                  }
+                }
+              ]
             },
             {
-              "matcher": {"id": "byName", "options": "❌ Failed"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u274c Failed"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "red"
+                  }
+                }
+              ]
             }
           ]
         },
@@ -300,15 +461,22 @@
           "orientation": "auto",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 22}
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 22
+        }
       },
       {
         "id": 13,
-        "title": "🔒 G5 Privacy Control",
+        "title": "\ud83d\udd12 G5 Privacy Control",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -317,35 +485,65 @@
         "targets": [
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g5_privacy_control\",status=\"passed\"})",
-            "legendFormat": "✅ Safe",
+            "legendFormat": "\u2705 Safe",
             "refId": "A"
           },
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g5_privacy_control\",status=\"warning\"})",
-            "legendFormat": "⚠️ PII Detected",
+            "legendFormat": "\u26a0\ufe0f PII Detected",
             "refId": "B"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 1, "color": "yellow"}
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 1,
+                  "color": "yellow"
+                }
               ]
             },
             "unit": "short"
           },
           "overrides": [
             {
-              "matcher": {"id": "byName", "options": "✅ Safe"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u2705 Safe"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "green"
+                  }
+                }
+              ]
             },
             {
-              "matcher": {"id": "byName", "options": "⚠️ PII Detected"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u26a0\ufe0f PII Detected"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "yellow"
+                  }
+                }
+              ]
             }
           ]
         },
@@ -356,15 +554,22 @@
           "orientation": "auto",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 22}
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 22
+        }
       },
       {
         "id": 14,
-        "title": "⚡ G8 Evaluation System (SLO)",
+        "title": "\u26a1 G8 Evaluation System (SLO)",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -373,45 +578,89 @@
         "targets": [
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g8_evaluation_system\",status=\"passed\"})",
-            "legendFormat": "✅ Within SLO",
+            "legendFormat": "\u2705 Within SLO",
             "refId": "A"
           },
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g8_evaluation_system\",status=\"warning\"})",
-            "legendFormat": "⚠️ Exceeded SLO",
+            "legendFormat": "\u26a0\ufe0f Exceeded SLO",
             "refId": "B"
           },
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g8_evaluation_system\",status=\"failed\"})",
-            "legendFormat": "❌ Failed",
+            "legendFormat": "\u274c Failed",
             "refId": "C"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 1, "color": "yellow"},
-                {"value": 5, "color": "red"}
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 1,
+                  "color": "yellow"
+                },
+                {
+                  "value": 5,
+                  "color": "red"
+                }
               ]
             },
             "unit": "short"
           },
           "overrides": [
             {
-              "matcher": {"id": "byName", "options": "✅ Within SLO"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u2705 Within SLO"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "green"
+                  }
+                }
+              ]
             },
             {
-              "matcher": {"id": "byName", "options": "⚠️ Exceeded SLO"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u26a0\ufe0f Exceeded SLO"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "yellow"
+                  }
+                }
+              ]
             },
             {
-              "matcher": {"id": "byName", "options": "❌ Failed"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u274c Failed"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "red"
+                  }
+                }
+              ]
             }
           ]
         },
@@ -422,15 +671,22 @@
           "orientation": "auto",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 22}
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 22
+        }
       },
       {
         "id": 6,
-        "title": "📊 G9 Data Governance",
+        "title": "\ud83d\udcca G9 Data Governance",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -439,35 +695,65 @@
         "targets": [
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g9_data_governance\",status=\"passed\"})",
-            "legendFormat": "✅ Compliant",
+            "legendFormat": "\u2705 Compliant",
             "refId": "A"
           },
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g9_data_governance\",status=\"warning\"})",
-            "legendFormat": "⚠️ Warning",
+            "legendFormat": "\u26a0\ufe0f Warning",
             "refId": "B"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 1, "color": "yellow"}
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 1,
+                  "color": "yellow"
+                }
               ]
             },
             "unit": "short"
           },
           "overrides": [
             {
-              "matcher": {"id": "byName", "options": "✅ Compliant"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u2705 Compliant"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "green"
+                  }
+                }
+              ]
             },
             {
-              "matcher": {"id": "byName", "options": "⚠️ Warning"},
-              "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]
+              "matcher": {
+                "id": "byName",
+                "options": "\u26a0\ufe0f Warning"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "yellow"
+                  }
+                }
+              ]
             }
           ]
         },
@@ -478,15 +764,22 @@
           "orientation": "auto",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 26}
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 26
+        }
       },
       {
         "id": 7,
-        "title": "📈 G12 Dashboard Metrics Export",
+        "title": "\ud83d\udcc8 G12 Dashboard Metrics Export",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -495,18 +788,26 @@
         "targets": [
           {
             "expr": "sum(ai_governance_checkpoint_total{criteria=\"g12_dashboard\",status=\"passed\"})",
-            "legendFormat": "✅ Metrics Exported",
+            "legendFormat": "\u2705 Metrics Exported",
             "refId": "A"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 1, "color": "green"}
+                {
+                  "value": 0,
+                  "color": "red"
+                },
+                {
+                  "value": 1,
+                  "color": "green"
+                }
               ]
             },
             "unit": "short"
@@ -519,15 +820,22 @@
           "orientation": "auto",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 26}
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 26
+        }
       },
       {
         "id": 9,
-        "title": "🚨 Alert Status",
+        "title": "\ud83d\udea8 Alert Status",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -536,24 +844,35 @@
         "targets": [
           {
             "expr": "sum(ai_governance_checkpoint_total{status=\"failed\"})",
-            "legendFormat": "❌ Failed Checks",
+            "legendFormat": "\u274c Failed Checks",
             "refId": "A"
           },
           {
             "expr": "sum(ai_governance_checkpoint_total{status=\"warning\"})",
-            "legendFormat": "⚠️ Warnings",
+            "legendFormat": "\u26a0\ufe0f Warnings",
             "refId": "B"
           }
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 1, "color": "yellow"},
-                {"value": 5, "color": "red"}
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 1,
+                  "color": "yellow"
+                },
+                {
+                  "value": 5,
+                  "color": "red"
+                }
               ]
             },
             "unit": "short"
@@ -566,15 +885,22 @@
           "orientation": "auto",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 12, "x": 12, "y": 26}
+        "gridPos": {
+          "h": 4,
+          "w": 12,
+          "x": 12,
+          "y": 26
+        }
       },
       {
         "id": 8,
-        "title": "📋 All Governance Criteria Status",
+        "title": "\ud83d\udccb All Governance Criteria Status",
         "type": "table",
         "datasource": {
           "type": "prometheus",
@@ -594,48 +920,93 @@
               "align": "auto",
               "displayMode": "auto"
             },
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 0.7, "color": "yellow"},
-                {"value": 0.9, "color": "green"}
+                {
+                  "value": 0,
+                  "color": "red"
+                },
+                {
+                  "value": 0.7,
+                  "color": "yellow"
+                },
+                {
+                  "value": 0.9,
+                  "color": "green"
+                }
               ]
             }
           },
           "overrides": [
             {
-              "matcher": {"id": "byName", "options": "Value"},
+              "matcher": {
+                "id": "byName",
+                "options": "Value"
+              },
               "properties": [
-                {"id": "displayName", "value": "Compliance Rate"},
-                {"id": "unit", "value": "percentunit"},
-                {"id": "custom.displayMode", "value": "color-background-solid"}
+                {
+                  "id": "displayName",
+                  "value": "Compliance Rate"
+                },
+                {
+                  "id": "unit",
+                  "value": "percentunit"
+                },
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background-solid"
+                }
               ]
             },
             {
-              "matcher": {"id": "byName", "options": "criteria"},
+              "matcher": {
+                "id": "byName",
+                "options": "criteria"
+              },
               "properties": [
-                {"id": "displayName", "value": "Governance Criteria"}
+                {
+                  "id": "displayName",
+                  "value": "Governance Criteria"
+                }
               ]
             },
             {
-              "matcher": {"id": "byName", "options": "risk_tier"},
+              "matcher": {
+                "id": "byName",
+                "options": "risk_tier"
+              },
               "properties": [
-                {"id": "displayName", "value": "Risk Tier"}
+                {
+                  "id": "displayName",
+                  "value": "Risk Tier"
+                }
               ]
             }
           ]
         },
         "options": {
           "showHeader": true,
-          "sortBy": [{"desc": false, "displayName": "Compliance Rate"}]
+          "sortBy": [
+            {
+              "desc": false,
+              "displayName": "Compliance Rate"
+            }
+          ]
         },
-        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 30}
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 30
+        }
       },
       {
         "id": 10,
-        "title": "📊 Total Operations Counter",
+        "title": "\ud83d\udcca Total Operations Counter",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -650,11 +1021,16 @@
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "blue"}
+                {
+                  "value": 0,
+                  "color": "blue"
+                }
               ]
             },
             "unit": "short"
@@ -667,15 +1043,22 @@
           "orientation": "horizontal",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 12, "x": 0, "y": 38}
+        "gridPos": {
+          "h": 4,
+          "w": 12,
+          "x": 0,
+          "y": 38
+        }
       },
       {
         "id": 11,
-        "title": "⏱️ Average Response Time",
+        "title": "\u23f1\ufe0f Average Response Time",
         "type": "stat",
         "datasource": {
           "type": "prometheus",
@@ -690,13 +1073,24 @@
         ],
         "fieldConfig": {
           "defaults": {
-            "color": {"mode": "thresholds"},
+            "color": {
+              "mode": "thresholds"
+            },
             "thresholds": {
               "mode": "absolute",
               "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 2, "color": "yellow"},
-                {"value": 5, "color": "red"}
+                {
+                  "value": 0,
+                  "color": "green"
+                },
+                {
+                  "value": 2,
+                  "color": "yellow"
+                },
+                {
+                  "value": 5,
+                  "color": "red"
+                }
               ]
             },
             "unit": "s"
@@ -709,11 +1103,18 @@
           "orientation": "horizontal",
           "reduceOptions": {
             "values": false,
-            "calcs": ["lastNotNull"]
+            "calcs": [
+              "lastNotNull"
+            ]
           },
           "textMode": "value_and_name"
         },
-        "gridPos": {"h": 4, "w": 12, "x": 12, "y": 38}
+        "gridPos": {
+          "h": 4,
+          "w": 12,
+          "x": 12,
+          "y": 38
+        }
       }
     ],
     "templating": {
@@ -760,8 +1161,27 @@
       "to": "now"
     },
     "timepicker": {
-      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h"],
-      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+      "refresh_intervals": [
+        "5s",
+        "10s",
+        "30s",
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "1h"
+      ],
+      "time_options": [
+        "5m",
+        "15m",
+        "1h",
+        "6h",
+        "12h",
+        "24h",
+        "2d",
+        "7d",
+        "30d"
+      ]
     },
     "refresh": "10s",
     "schemaVersion": 38,

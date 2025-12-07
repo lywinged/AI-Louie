@@ -185,6 +185,13 @@ rag_query_cache_misses_counter = Counter(
     "Total number of RAG query cache misses",
 )
 
+# G8: SLO Evaluation Metrics
+rag_slo_violations_total = Counter(
+    "rag_slo_violations_total",
+    "Total number of RAG SLO violations (latency > 2000ms for R1 tier)",
+    ["endpoint", "risk_tier"]  # endpoint: ask/ask-smart/ask-graph, risk_tier: R1/R2/R3
+)
+
 # === Enhanced RAG Performance Metrics ===
 
 # pgvector query performance
@@ -280,6 +287,12 @@ circuit_breaker_state_gauge.labels(service="embedding").set(0)
 circuit_breaker_state_gauge.labels(service="rerank").set(0)
 
 __all__ = [
+    # AI Governance metrics
+    "governance_checkpoint_counter",
+    "governance_operation_counter",
+    "governance_latency_histogram",
+    "governance_compliance_gauge",
+    # Role profile metrics
     "role_profile_base_sync_counter",
     "role_profile_diary_sync_counter",
     "role_profile_section_sync_counter",
@@ -300,6 +313,7 @@ __all__ = [
     "rag_latency_histogram",
     "rag_query_cache_hits_counter",
     "rag_query_cache_misses_counter",
+    "rag_slo_violations_total",
     # Enhanced RAG metrics
     "pgvector_query_duration_histogram",
     "pgvector_query_counter",

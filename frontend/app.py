@@ -1390,6 +1390,74 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ===== Startup Loading Screen =====
+# Check if backend services are ready before showing main UI
+def check_backend_ready():
+    """Check if backend services (Qdrant, OpenAI, Inference) are ready"""
+    try:
+        # Check backend health
+        health_resp = requests.get(f"{BACKEND_URL}/health", timeout=3)
+        if health_resp.status_code != 200:
+            return False, "Backend API not responding"
+
+        # Check if Qdrant is loaded
+        try:
+            qdrant_resp = requests.post(
+                f"{BACKEND_URL}/api/rag/ask",
+                json={"question": "test", "top_k": 1},
+                timeout=5
+            )
+            # If we get a response (even error), Qdrant is loaded
+        except Exception as e:
+            return False, f"Qdrant not ready: {str(e)}"
+
+        return True, "All services ready"
+    except Exception as e:
+        return False, f"Backend not available: {str(e)}"
+
+# Show loading screen until backend is ready
+if "app_ready" not in st.session_state:
+    st.session_state.app_ready = False
+
+if not st.session_state.app_ready:
+    # Create centered loading screen
+    st.markdown("""
+        <div style='display: flex; justify-content: center; align-items: center; height: 70vh;'>
+            <div style='text-align: center;'>
+                <h1>🤖 AI Assistant</h1>
+                <p style='font-size: 1.2rem; color: #666;'>Loading services...</p>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Use st.empty() to avoid background dimming
+    status_placeholder = st.empty()
+
+    with status_placeholder.container():
+        st.info("🔄 Checking backend services...")
+
+        max_retries = 30  # 30 seconds max wait
+        retry_count = 0
+
+        while retry_count < max_retries:
+            ready, message = check_backend_ready()
+
+            if ready:
+                st.success(f"✅ {message}")
+                time.sleep(0.5)  # Brief pause to show success message
+                st.session_state.app_ready = True
+                st.rerun()
+                break
+            else:
+                # Update status without dimming
+                status_placeholder.warning(f"⏳ {message} (attempt {retry_count + 1}/{max_retries})")
+                time.sleep(1)
+                retry_count += 1
+
+        if not st.session_state.app_ready:
+            status_placeholder.error("❌ Failed to connect to backend services. Please check if containers are running.")
+            st.stop()
+
 # Initialize session state
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
@@ -1567,7 +1635,7 @@ if seed_state in ["checking", "counting", "initializing", "in_progress"]:
 
     This is a one-time setup that happens on first startup.
 
-    You can use other modes (Code, Trip Planning, Stats) in the meantime.
+    
     """)
 
     # Store that seed is NOT ready
@@ -2692,13 +2760,83 @@ if current_mode == "rag":
                     time.sleep(0.3)
 
                     st.markdown("**2️⃣ 🎯 Strategy Selection & Execution**")
-                    with st.spinner("🔍 Classifying query → 🎯 Selecting strategy → 🔎 Searching → 🧠 Generating answer..."):
-                        # Call non-streaming API
-                        response = requests.post(
-                            f"{BACKEND_URL}/api/rag/{endpoint_override or 'ask-smart'}",
+
+                    # Create progress placeholder for real-time updates
+                    progress_placeholder = st.empty()
+                    progress_messages = []
+
+                    # Use streaming endpoint for real-time progress
+                    try:
+                        stream_response = requests.post(
+                            f"{BACKEND_URL}/api/rag/{endpoint_override or 'ask-smart'}-stream",
                             json=payload,
-                            timeout=180
+                            timeout=180,
+                            stream=True,
+                            headers={'Accept': 'text/event-stream'}
                         )
+
+                        response_data = None
+                        current_event = None
+
+                        # Parse SSE manually
+                        for line in stream_response.iter_lines(decode_unicode=True):
+                            if not line:
+                                continue
+
+                            # Handle SSE format: "event: <type>" or "data: <json>"
+                            if line.startswith('event:'):
+                                current_event = line[6:].strip()
+                            elif line.startswith('data:'):
+                                data_str = line[5:].strip()
+
+                                # Handle nested "data:" prefix (some SSE implementations add it)
+                                if data_str.startswith('event:'):
+                                    current_event = data_str[6:].strip()
+                                    continue
+                                elif data_str.startswith('data:'):
+                                    data_str = data_str[5:].strip()
+
+                                # Parse JSON
+                                if data_str:
+                                    try:
+                                        data = json.loads(data_str)
+                                        if current_event == 'progress':
+                                            msg = data.get('message', '')
+                                            progress_messages.append(msg)
+                                            # Show last 6 progress messages
+                                            progress_placeholder.info('\n\n'.join(progress_messages[-6:]))
+                                        elif current_event == 'result':
+                                            response_data = data
+                                        elif current_event == 'done':
+                                            break
+                                    except json.JSONDecodeError:
+                                        pass  # Skip malformed JSON
+
+                        progress_placeholder.empty()  # Clear progress messages
+
+                        # Check if we got a result
+                        if response_data is None:
+                            raise Exception("No result received from streaming endpoint")
+
+                        # Create response object compatible with existing code
+                        class StreamResponse:
+                            def __init__(self, data):
+                                self._data = data
+                                self.status_code = 200
+                            def json(self):
+                                return self._data
+
+                        response = StreamResponse(response_data)
+
+                    except Exception as e:
+                        # Fallback to non-streaming on any error
+                        st.warning(f"⚠️ Streaming failed ({str(e)}), falling back to non-streaming mode...")
+                        with st.spinner("🔍 Classifying query → 🎯 Selecting strategy → 🔎 Searching → 🧠 Generating answer..."):
+                            response = requests.post(
+                                f"{BACKEND_URL}/api/rag/{endpoint_override or 'ask-smart'}",
+                                json=payload,
+                                timeout=180
+                            )
                 elif rag_strategy == "graph":
                     st.markdown("**1️⃣ 🔍 Extract Query Entities**")
                     st.caption("Identifying key entities in your question...")
@@ -3467,10 +3605,17 @@ if current_mode == "rag":
                                         if 'citations' in data:
                                             num_chunks = data.get('num_chunks', 0)
                                             retrieval_ms = data.get('retrieval_time_ms', 0)
+                                            is_cached = data.get('cached', False)
                                             result['citations'] = data.get('citations', [])
                                             result['num_chunks_retrieved'] = num_chunks
                                             result['retrieval_time_ms'] = retrieval_ms
                                             st.caption(f"📚 Retrieved {num_chunks} documents ({retrieval_ms:.0f}ms)")
+
+                                            # Display cache status
+                                            if is_cached:
+                                                st.success("💾 **Cache HIT** - Answer retrieved from cache (0 tokens used)")
+                                            else:
+                                                st.info("🔍 **Cache MISS** - Generating fresh answer")
 
                                             # For Smart mode, display final LLM generation step
                                             if answer_placeholder is None and rag_strategy == "smart":
@@ -3491,6 +3636,7 @@ if current_mode == "rag":
                                             result['total_time_ms'] = data.get('total_time_ms', 0)
                                             result['llm_time_ms'] = data.get('llm_time_ms', 0)
                                             result['retrieval_time_ms'] = data.get('retrieval_time_ms', 0)
+                                            result['cache_hit'] = data.get('cache_hit', False)
 
                                             # Extract detailed timings if available
                                             if 'timings' in data:
@@ -3591,7 +3737,25 @@ if current_mode == "rag":
                         models_info = {}
 
                     llm_ms = timings.get("llm_ms", result.get("llm_time_ms", 0.0))
-                    retrieval_ms = result.get('retrieval_time_ms', timings.get('total_ms', 0))
+
+                    # Calculate retrieval time from detailed timings (Embed + Vector + Rerank)
+                    # First, get individual components
+                    embed_ms = timings.get('embed_ms', 0.0) or timings.get('embedding_ms', 0.0)
+                    vector_ms = timings.get('vector_ms', 0.0) or timings.get('vector_search_ms', 0.0)
+
+                    # If we have hybrid_search_ms but not individual components, split it
+                    if (embed_ms == 0.0 and vector_ms == 0.0) and 'hybrid_search_ms' in timings:
+                        hybrid_ms = timings.get('hybrid_search_ms', 0.0)
+                        embed_ms = hybrid_ms * 0.3  # Approximate: 30% for embedding
+                        vector_ms = hybrid_ms * 0.7  # Approximate: 70% for vector search
+
+                    rerank_ms = timings.get('rerank_ms', 0.0) or timings.get('reranking_ms', 0.0)
+
+                    # Retrieval time = Embed + Vector + Rerank
+                    calculated_retrieval_ms = embed_ms + vector_ms + rerank_ms
+
+                    # Use explicit retrieval_time_ms if provided, otherwise use calculated value
+                    retrieval_ms = result.get('retrieval_time_ms', 0) or timings.get('total_retrieval_ms', 0) or calculated_retrieval_ms
 
                     # Main metrics row
                     col1, col2, col3 = st.columns(3)
@@ -4126,6 +4290,12 @@ elif current_mode == "trip" and prompt and prompt != "__MODE_ACTIVATED__":
                         st.session_state.metrics_history["costs"].append(token_cost_usd)
                         st.session_state.metrics_history["services"].append("trip")
 
+                        # Display AI Governance Status
+                        governance_context = response.get('governance_context')
+                        if governance_context:
+                            st.markdown("---")
+                            display_governance_status(governance_context)
+
                         st.markdown("\n**Would you like to make any changes to this plan? (or type 'q'(quit) to exit)**")
 
                         append_chat_history("assistant", "Trip plan created")
@@ -4532,6 +4702,12 @@ elif current_mode == "code" and prompt and prompt != "__MODE_ACTIVATED__":
                     st.session_state.codegen_learning_history["quality_scores"].append(quality_score)
                     st.session_state.codegen_learning_history["speed_scores"].append(speed_score)
                     st.session_state.codegen_learning_history["languages"].append(result.get('language', 'python'))
+
+                # Display AI Governance Status
+                governance_context = result.get('governance_context')
+                if governance_context:
+                    st.markdown("---")
+                    display_governance_status(governance_context)
 
                 st.markdown("\n**Continue generating code or type 'q'(quit) to exit Code mode.**")
 

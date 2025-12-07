@@ -14,9 +14,10 @@ Key Features:
 """
 
 import asyncio
+import inspect
 import logging
 import time
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, Optional, Tuple, Set, Callable
 from datetime import datetime
 import json
 import re
@@ -26,6 +27,7 @@ import os
 
 from openai import AsyncOpenAI
 from qdrant_client import QdrantClient
+from backend.services.unified_llm_metrics import get_unified_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +99,12 @@ class IncrementalGraphRAG:
         self.generation_model = generation_model
         # Allow tuning via environment
         self.max_jit_chunks = int(os.getenv("GRAPH_JIT_MAX_CHUNKS", max_jit_chunks))
-        # Smaller batches but higher timeout to reduce timeouts
-        self.jit_batch_size = int(os.getenv("GRAPH_JIT_BATCH_SIZE", "4"))
+        # CPU-aware batch size: default to 4, but scale based on available CPUs if not set
+        cpu_count = os.cpu_count() or 4
+        default_batch_size = min(cpu_count * 2, 8)  # 2x CPU cores, capped at 8 for API rate limits
+        self.jit_batch_size = int(os.getenv("GRAPH_JIT_BATCH_SIZE", str(default_batch_size)))
         self.jit_batch_timeout = float(os.getenv("GRAPH_JIT_BATCH_TIMEOUT", "30"))  # seconds per batch
+        logger.info(f"CPU-aware batch size: {self.jit_batch_size} (CPUs: {cpu_count})")
 
         # In-memory knowledge graph
         self.graph = nx.DiGraph()
@@ -145,11 +150,14 @@ class IncrementalGraphRAG:
             max_hops: Max graph traversal distance
             enable_vector_retrieval: Whether to combine with vector search
             progress_callback: Optional callback(step: int, message: str, metadata: dict)
-                              for real-time progress updates
+                              for real-time progress updates. Can be sync or async.
 
         Returns:
             Answer with graph context, timings, and statistics
         """
+        import asyncio
+        import inspect
+
         start_time = time.time()
         timings = {}
 
@@ -160,9 +168,18 @@ class IncrementalGraphRAG:
         logger.info(f"Graph RAG Question: {question}")
         logger.info(f"Graph RAG settings: max_jit_chunks={self.max_jit_chunks}, batch_size={self.jit_batch_size}, batch_timeout={self.jit_batch_timeout}s")
 
+        # Helper to call progress_callback (async or sync)
+        async def emit_progress(step: int, message: str, metadata: dict = None):
+            if progress_callback:
+                if inspect.iscoroutinefunction(progress_callback):
+                    await progress_callback(step, message, metadata or {})
+                else:
+                    progress_callback(step, message, metadata or {})
+                    # Give event loop a chance to process
+                    await asyncio.sleep(0)
+
         # Step 1: Extract entities from query
-        if progress_callback:
-            progress_callback(1, "🔍 Extracting entities from query...", {})
+        await emit_progress(1, "🔍 Extracting entities from query...", {})
 
         t0 = time.time()
         query_entities, entity_extraction_tokens, entity_extraction_cost = await self.extract_query_entities(question)
@@ -176,9 +193,8 @@ class IncrementalGraphRAG:
         logger.info(f"Extracted {len(query_entities)} query entities: {query_entities}")
 
         # Step 2: Check graph coverage
-        if progress_callback:
-            progress_callback(2, f"🕸️ Checking graph for {len(query_entities)} entities...",
-                            {"entities": len(query_entities)})
+        await emit_progress(2, f"🕸️ Checking graph for {len(query_entities)} entities...",
+                          {"entities": len(query_entities)})
 
         t0 = time.time()
         existing_entities, missing_entities = self.check_entities_in_graph(query_entities)
@@ -188,9 +204,8 @@ class IncrementalGraphRAG:
         # Step 3: JIT build missing entities
         jit_stats = None
         if missing_entities:
-            if progress_callback:
-                progress_callback(3, f"⚡ Building {len(missing_entities)} missing entities...",
-                                {"missing": len(missing_entities), "existing": len(existing_entities)})
+            await emit_progress(3, f"⚡ Building {len(missing_entities)} missing entities...",
+                              {"missing": len(missing_entities), "existing": len(existing_entities)})
 
             t0 = time.time()
             jit_stats = await self.jit_build_entities(missing_entities, question, progress_callback=progress_callback)
@@ -207,14 +222,12 @@ class IncrementalGraphRAG:
                        f"from {jit_stats['chunks_processed']} chunks")
         else:
             timings['jit_build_ms'] = 0
-            if progress_callback:
-                progress_callback(3, "✅ All entities exist in graph cache", {})
+            await emit_progress(3, "✅ All entities exist in graph cache", {})
             logger.info("All entities exist in graph - using cache")
 
         # Step 4: Query graph for relationships
-        if progress_callback:
-            progress_callback(4, f"🔗 Querying graph (max {max_hops} hops)...",
-                            {"max_hops": max_hops})
+        await emit_progress(4, f"🔗 Querying graph (max {max_hops} hops)...",
+                          {"max_hops": max_hops})
 
         t0 = time.time()
         graph_context = self.query_subgraph(query_entities, max_hops=max_hops)
@@ -225,9 +238,8 @@ class IncrementalGraphRAG:
         # Step 5: Optional vector retrieval for additional context
         vector_chunks = []
         if enable_vector_retrieval:
-            if progress_callback:
-                progress_callback(5, f"🔎 Vector search (top {top_k} chunks)...",
-                                {"top_k": top_k})
+            await emit_progress(5, f"🔎 Vector search (top {top_k} chunks)...",
+                              {"top_k": top_k})
 
             t0 = time.time()
             vector_chunks = await self.vector_retrieve(question, top_k=top_k)
@@ -250,8 +262,7 @@ class IncrementalGraphRAG:
             }
 
         # Step 6: Generate answer with LLM
-        if progress_callback:
-            progress_callback(6, "🧠 Generating final answer...", {})
+        await emit_progress(6, "🧠 Generating final answer...", {})
 
         t0 = time.time()
         answer_result = await self.generate_answer(
@@ -330,13 +341,23 @@ Keep it concise - maximum 5 entities.
 """
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.extraction_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=200,
-                response_format={"type": "json_object"},  # Enforce JSON output
-            )
+                endpoint="graph_rag_query_understanding"
+            ) as tracker:
+                messages = [{"role": "user", "content": prompt}]
+                response = await self.openai_client.chat.completions.create(
+                    model=self.extraction_model,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=200,
+                    response_format={"type": "json_object"},  # Enforce JSON output
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
 
@@ -411,7 +432,7 @@ Keep it concise - maximum 5 entities.
         Just-In-Time build: Extract entities and relationships for missing entities.
 
         Args:
-            progress_callback: Optional callback for batch progress updates
+            progress_callback: Optional callback for batch progress updates (can be sync or async)
 
         Process:
         1. Search Qdrant for chunks mentioning these entities
@@ -426,6 +447,16 @@ Keep it concise - maximum 5 entities.
             Statistics about what was built
         """
         logger.info(f"JIT building entities (person-focus): {entity_names}")
+
+        # Helper to call progress_callback (async or sync)
+        async def emit_progress(step: int, message: str, metadata: dict = None):
+            if progress_callback:
+                if inspect.iscoroutinefunction(progress_callback):
+                    await progress_callback(step, message, metadata or {})
+                else:
+                    progress_callback(step, message, metadata or {})
+                    # Give event loop a chance to process
+                    await asyncio.sleep(0)
 
         # Cache key for this entity set
         cache_key = tuple(sorted(entity_names))
@@ -508,10 +539,10 @@ Keep it concise - maximum 5 entities.
 
             # Run batch extractions in parallel
             async def _run_batch(batch_idx, batch):
-                # Send progress update for this batch
-                if progress_callback:
-                    progress_callback(3, f"⚡ Building entities (batch {batch_idx + 1}/{total_batches})...",
-                                    {"batch": batch_idx + 1, "total_batches": total_batches})
+                # Send progress update for this batch with chunk details
+                chunks_in_batch = len(batch)
+                await emit_progress(3, f"⚡ Building entities: batch {batch_idx + 1}/{total_batches} ({chunks_in_batch} chunks)...",
+                                  {"batch": batch_idx + 1, "total_batches": total_batches, "chunks": chunks_in_batch})
 
                 logger.info(f"Batch extraction start: size={len(batch)} timeout={self.jit_batch_timeout}s")
                 try:
@@ -519,7 +550,10 @@ Keep it concise - maximum 5 entities.
                         self.batch_extract_entities_and_relationships(batch),
                         timeout=self.jit_batch_timeout
                     )
-                    logger.info(f"Batch extraction done: size={len(batch)}")
+                    # Count entities extracted in this batch
+                    batch_ents = sum(len(x.get('entities', [])) for x in res) if res else 0
+                    batch_rels = sum(len(x.get('relationships', [])) for x in res) if res else 0
+                    logger.info(f"Batch extraction done: size={len(batch)}, entities={batch_ents}, relationships={batch_rels}")
                     return res
                 except asyncio.TimeoutError:
                     logger.warning(f"Batch extraction timeout after {self.jit_batch_timeout}s (size={len(batch)})")
@@ -610,6 +644,10 @@ Keep it concise - maximum 5 entities.
             self.stats.coverage_chunks = len(self.processed_chunks)
             self.stats.last_updated = datetime.utcnow().isoformat()
 
+            # Send completion progress update with final entity counts
+            await emit_progress(3, f"✅ Entity building complete: {entities_added} entities, {relationships_added} relationships",
+                              {"entities": entities_added, "relationships": relationships_added, "chunks": chunks_processed})
+
             logger.info(f"✅ Batch extraction completed: {entities_added} entities, "
                        f"{relationships_added} relationships from {chunks_processed} chunks")
 
@@ -691,13 +729,24 @@ Entity names should be lowercase. Limit: max 10 entities and 15 relationships pe
 """
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.extraction_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=1500,  # Allow more room for entities/relationships
-                response_format={"type": "json_object"},
-            )
+                endpoint="graph_rag_entity_extraction"
+            ) as tracker:
+                messages = [{"role": "user", "content": prompt}]
+                response = await self.openai_client.chat.completions.create(
+                    model=self.extraction_model,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=1500,  # Allow more room for entities/relationships
+                    response_format={"type": "json_object"},
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
+
             logger.info(f"LLM batch_extract success: {len(chunks)} chunks")
 
             # Track tokens from this LLM call
@@ -840,13 +889,23 @@ Limit: max 10 entities, max 15 relationships.
 """
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.extraction_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=800,
-                response_format={"type": "json_object"},  # Enforce JSON output
-            )
+                endpoint="graph_rag_single_entity_extraction"
+            ) as tracker:
+                messages = [{"role": "user", "content": prompt}]
+                response = await self.openai_client.chat.completions.create(
+                    model=self.extraction_model,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=800,
+                    response_format={"type": "json_object"},  # Enforce JSON output
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
 
@@ -1089,12 +1148,22 @@ If the graph shows relationships between entities, explain those connections.
 """
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=self.generation_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=800,
-            )
+                endpoint="graph_rag_answer_generation"
+            ) as tracker:
+                messages = [{"role": "user", "content": prompt}]
+                response = await self.openai_client.chat.completions.create(
+                    model=self.generation_model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=800,
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             answer = response.choices[0].message.content.strip()
 

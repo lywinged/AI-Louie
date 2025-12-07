@@ -25,6 +25,7 @@ from backend.services.governance_tracker import (
     GovernanceCriteria,
 )
 from backend.utils.openai import sanitize_messages
+from backend.services.unified_llm_metrics import get_unified_metrics
 
 logger = structlog.get_logger(__name__)
 
@@ -61,7 +62,8 @@ class SelfRAG:
         *,
         top_k: int = 10,
         use_hybrid: bool = True,
-        include_timings: bool = True
+        include_timings: bool = True,
+        progress_callback: Optional[callable] = None
     ) -> RAGResponse:
         """
         Answer question with iterative retrieval and self-reflection.
@@ -135,6 +137,19 @@ class SelfRAG:
                     "current_best_confidence": best_confidence
                 }
             )
+
+            # Emit progress callback for iteration start
+            if progress_callback:
+                progress_callback(
+                    iteration + 1,
+                    f"Starting iteration {iteration + 1}/{self.max_iterations}",
+                    {
+                        "iteration": iteration + 1,
+                        "max_iterations": self.max_iterations,
+                        "total_chunks_so_far": len(all_chunks),
+                        "current_best_confidence": best_confidence
+                    }
+                )
 
             # Retrieve documents (first iteration or follow-up)
             if iteration == 0:
@@ -264,6 +279,21 @@ class SelfRAG:
                 'token_usage': iteration_token_usage
             })
 
+            # Emit progress callback for iteration completion
+            if progress_callback:
+                progress_callback(
+                    iteration + 1,
+                    f"Iteration {iteration + 1} complete - Confidence: {confidence:.2f}",
+                    {
+                        "iteration": iteration + 1,
+                        "confidence": confidence,
+                        "num_chunks_total": len(all_chunks),
+                        "num_new_chunks": len(new_chunks) if iteration > 0 else len(all_chunks),
+                        "iteration_time_ms": iteration_ms,
+                        "converged": confidence >= self.confidence_threshold
+                    }
+                )
+
             # Check if we should stop
             if confidence >= self.confidence_threshold:
                 logger.info(
@@ -370,7 +400,6 @@ class SelfRAG:
 
         # Calculate retrieval and LLM times from iterations
         total_retrieval_ms = sum(it['iteration_time_ms'] for it in iterations_metadata)
-        llm_time_ms = total_retrieval_ms * 0.3  # Rough estimate
 
         # Aggregate timings from all iterations
         aggregated_timings = {}
@@ -378,7 +407,7 @@ class SelfRAG:
             # Aggregate strategy: sum all values (total time across all iterations)
             # Support both enhanced_rag_pipeline (hybrid_search_ms) and rag_pipeline (embed_ms, vector_ms)
             timing_keys = [
-                'embed_ms', 'vector_ms', 'rerank_ms',
+                'embed_ms', 'vector_ms', 'rerank_ms', 'llm_ms',
                 'hybrid_search_ms',  # from enhanced_rag_pipeline
                 'candidate_prep_ms', 'pre_rerank_ms'
             ]
@@ -387,9 +416,13 @@ class SelfRAG:
                 if values:
                     aggregated_timings[key] = sum(values)
 
-            # If we have hybrid_search_ms but not embed_ms/vector_ms,
-            # the frontend expects embed_ms and vector_ms separately
-            # We can approximate by splitting hybrid_search_ms (embedding is typically 30% of hybrid search)
+        # Get LLM time from aggregated timings, fallback to estimate if not available
+        llm_time_ms = aggregated_timings.get('llm_ms', total_retrieval_ms * 0.3)
+
+        # If we have hybrid_search_ms but not embed_ms/vector_ms,
+        # the frontend expects embed_ms and vector_ms separately
+        # We can approximate by splitting hybrid_search_ms (embedding is typically 30% of hybrid search)
+        if hasattr(self, '_iteration_timings') and self._iteration_timings:
             if 'hybrid_search_ms' in aggregated_timings and 'embed_ms' not in aggregated_timings:
                 hybrid_ms = aggregated_timings['hybrid_search_ms']
                 aggregated_timings['embed_ms'] = hybrid_ms * 0.3  # Approximate embed time
@@ -531,12 +564,21 @@ Respond in this format:
                 {"role": "user", "content": prompt}
             ])
 
-            response = await client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=llm_model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=600
-            )
+                endpoint="self_rag_generate"
+            ) as tracker:
+                response = await client.chat.completions.create(
+                    model=llm_model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=600
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
 
@@ -610,12 +652,21 @@ Respond in this format:
                 {"role": "user", "content": prompt}
             ])
 
-            response = await client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=llm_model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=600
-            )
+                endpoint="self_rag_relevance_check"
+            ) as tracker:
+                response = await client.chat.completions.create(
+                    model=llm_model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=600
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
 
@@ -713,12 +764,21 @@ Respond in JSON format:
                 {"role": "user", "content": reflection_prompt}
             ])
 
-            response = await client.chat.completions.create(
+            unified_metrics = get_unified_metrics()
+            async with unified_metrics.track_llm_call(
                 model=llm_model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=200
-            )
+                endpoint="self_rag_reflection"
+            ) as tracker:
+                response = await client.chat.completions.create(
+                    model=llm_model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=200
+                )
+
+                # Set context for tracking (REQUIRED for metrics to be recorded)
+                tracker["messages"] = messages
+                tracker["completion"] = response.choices[0].message.content
 
             content = response.choices[0].message.content.strip()
 

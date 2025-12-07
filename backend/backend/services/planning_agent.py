@@ -21,6 +21,7 @@ from backend.services.token_counter import get_token_counter, TokenUsage
 from backend.services.agent_metrics_store import planning_metrics_store
 from backend.services.fx_service import get_fx_service
 from backend.utils.openai import sanitize_messages
+from backend.services.unified_llm_metrics import get_unified_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -302,14 +303,23 @@ class PlanningAgent:
                 temperature = strategy.get("model_temp", 0.7) if strategy else 0.7
                 sanitized_messages = sanitize_messages(messages)
 
-                response = await self.client.chat.completions.create(
+                unified_metrics = get_unified_metrics()
+                async with unified_metrics.track_llm_call(
                     model=self.model_name,
-                    messages=sanitized_messages,
-                    tools=tools_definitions,
-                    tool_choice="auto",
-                    temperature=temperature,
-                    max_tokens=1500
-                )
+                    endpoint="planning_agent"
+                ) as tracker:
+                    response = await self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=sanitized_messages,
+                        tools=tools_definitions,
+                        tool_choice="auto",
+                        temperature=temperature,
+                        max_tokens=1500
+                    )
+
+                    # Set context for tracking (REQUIRED for metrics to be recorded)
+                    tracker["messages"] = sanitized_messages
+                    tracker["completion"] = response.choices[0].message.content or ""
 
                 assistant_message = response.choices[0].message
 
