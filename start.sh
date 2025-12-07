@@ -165,6 +165,8 @@ if [[ ! -f "$DATA_ZIP" ]]; then
   if command -v curl >/dev/null 2>&1; then
     if curl -L -o "$DATA_ZIP" "$DATA_URL" --progress-bar; then
       echo "   ✅ Downloaded ${DATA_ZIP} successfully"
+      chmod 644 "$DATA_ZIP"
+      echo "   ✅ Set file permissions"
     else
       echo "   ❌ Failed to download ${DATA_ZIP}"
       echo "   Please download manually from: $DATA_URL"
@@ -173,6 +175,8 @@ if [[ ! -f "$DATA_ZIP" ]]; then
   elif command -v wget >/dev/null 2>&1; then
     if wget -O "$DATA_ZIP" "$DATA_URL"; then
       echo "   ✅ Downloaded ${DATA_ZIP} successfully"
+      chmod 644 "$DATA_ZIP"
+      echo "   ✅ Set file permissions"
     else
       echo "   ❌ Failed to download ${DATA_ZIP}"
       echo "   Please download manually from: $DATA_URL"
@@ -194,10 +198,16 @@ echo
 # Step 0b: Extract data.zip → ./data (flatten)
 # ===========================
 echo_hr
-echo "📦 Extracting ${DATA_ZIP} → ${DATA_DIR} (flatten 1-level)"
+echo "📦 Checking data directory"
 echo_hr
 
-if [[ -f "$DATA_ZIP" ]]; then
+# Check if data folder exists and has content
+if [[ -d "$DATA_DIR" ]] && [[ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]]; then
+  echo "   ✅ Data folder already exists with content, skipping extraction"
+  echo
+elif [[ -f "$DATA_ZIP" ]]; then
+  echo "   📦 Extracting ${DATA_ZIP} → ${DATA_DIR} (flatten 1-level)"
+
   if ! command -v unzip >/dev/null 2>&1; then
     echo "❌ 'unzip' not found. Install it first (macOS: brew install unzip, Ubuntu: sudo apt install unzip)."
     exit 1
