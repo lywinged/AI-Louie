@@ -613,7 +613,7 @@ echo
 
 # Monitor frontend container - exit if it stops
 echo "Monitoring frontend container..."
-FRONTEND_CONTAINER="frontend-ui"
+FRONTEND_CONTAINER="streamlit-ui"
 
 while true; do
   # Check if frontend container is still running
