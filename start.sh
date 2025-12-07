@@ -404,7 +404,7 @@ START_TIME=$(date +%s)
 for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
   # Check if collection exists and has vectors
   COLLECTION_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
-  VECTOR_COUNT=$(echo "$COLLECTION_INFO" | grep -o '"vectors_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
+  VECTOR_COUNT=$(echo "$COLLECTION_INFO" | grep -o '"points_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
 
   ELAPSED=$(($(date +%s) - START_TIME))
 
@@ -452,7 +452,7 @@ echo
 
 # Final check
 FINAL_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
-FINAL_COUNT=$(echo "$FINAL_INFO" | grep -o '"vectors_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
+FINAL_COUNT=$(echo "$FINAL_INFO" | grep -o '"points_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
 
 if [[ "$FINAL_COUNT" -eq 0 ]]; then
   echo
