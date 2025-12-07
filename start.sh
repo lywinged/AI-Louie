@@ -150,10 +150,51 @@ open_url() {
   esac
 }
 # ===========================
-# Step 0: OPTIONAL extract data.zip → ./data (flatten)
+# Step 0a: Download data.zip if not present
 # ===========================
 echo_hr
-echo "📦 Preparing optional ${DATA_ZIP} → ${DATA_DIR} (flatten 1-level)"
+echo "📥 Checking for ${DATA_ZIP}"
+echo_hr
+
+DATA_URL="https://huggingface.co/datasets/louielunz/150books/resolve/main/data.zip"
+
+if [[ ! -f "$DATA_ZIP" ]]; then
+  echo "⚠️  ${DATA_ZIP} not found locally"
+  echo "   Downloading from Hugging Face..."
+
+  if command -v curl >/dev/null 2>&1; then
+    if curl -L -o "$DATA_ZIP" "$DATA_URL" --progress-bar; then
+      echo "   ✅ Downloaded ${DATA_ZIP} successfully"
+    else
+      echo "   ❌ Failed to download ${DATA_ZIP}"
+      echo "   Please download manually from: $DATA_URL"
+      exit 1
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if wget -O "$DATA_ZIP" "$DATA_URL"; then
+      echo "   ✅ Downloaded ${DATA_ZIP} successfully"
+    else
+      echo "   ❌ Failed to download ${DATA_ZIP}"
+      echo "   Please download manually from: $DATA_URL"
+      exit 1
+    fi
+  else
+    echo "   ❌ Neither curl nor wget found. Install one of them:"
+    echo "      macOS: curl is pre-installed, or brew install wget"
+    echo "      Ubuntu: sudo apt install curl"
+    echo "   Or download manually from: $DATA_URL"
+    exit 1
+  fi
+else
+  echo "   ✅ ${DATA_ZIP} found locally"
+fi
+echo
+
+# ===========================
+# Step 0b: Extract data.zip → ./data (flatten)
+# ===========================
+echo_hr
+echo "📦 Extracting ${DATA_ZIP} → ${DATA_DIR} (flatten 1-level)"
 echo_hr
 
 if [[ -f "$DATA_ZIP" ]]; then
