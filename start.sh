@@ -387,7 +387,7 @@ fi
 # ===========================
 echo
 echo_hr
-echo "⏳ Waiting for Qdrant Collection Seeding"
+echo "⏳ Checking Qdrant Collection Status"
 echo_hr
 COLLECTION_NAME="${QDRANT_COLLECTION:-assessment_docs_minilm}"
 MAX_WAIT=600  # Maximum 10 minutes wait (for large parallel seeding)
@@ -397,17 +397,28 @@ MIN_STABLE_VECTORS=140000  # Wait for ~93% completion (140k/150k) before stabili
 STABLE_CHECKS_NEEDED=4  # Number of consecutive stable checks (20s)
 
 echo "Collection: ${COLLECTION_NAME}"
-echo "Checking every ${WAIT_INTERVAL}s (max ${MAX_WAIT}s)..."
-echo
 
-PREV_COUNT=0
-STABLE_COUNT=0
-START_TIME=$(date +%s)
+# Quick check if collection already has sufficient data (from previous runs)
+INITIAL_CHECK=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
+INITIAL_COUNT=$(echo "$INITIAL_CHECK" | grep -o '"points_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
 
-for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
-  # Check if collection exists and has vectors
-  COLLECTION_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
-  VECTOR_COUNT=$(echo "$COLLECTION_INFO" | grep -o '"points_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
+if [[ "$INITIAL_COUNT" -ge "$MIN_STABLE_VECTORS" ]]; then
+  echo "   ✅ Collection already populated with ${INITIAL_COUNT} vectors (persisted from previous run)"
+  echo "   Skipping seeding wait - ready to use!"
+else
+  echo "   Current vectors: ${INITIAL_COUNT}"
+  echo "   Waiting for seeding to complete..."
+  echo "   Checking every ${WAIT_INTERVAL}s (max ${MAX_WAIT}s)..."
+  echo
+
+  PREV_COUNT=0
+  STABLE_COUNT=0
+  START_TIME=$(date +%s)
+
+  for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
+    # Check if collection exists and has vectors
+    COLLECTION_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
+    VECTOR_COUNT=$(echo "$COLLECTION_INFO" | grep -o '"points_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
 
   ELAPSED=$(($(date +%s) - START_TIME))
 
@@ -455,29 +466,30 @@ for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
     printf "\r   ⏳ Waiting for seeding to start... ${ELAPSED}s elapsed (attempt $i/$((MAX_WAIT/WAIT_INTERVAL)))"
     sleep $WAIT_INTERVAL
   fi
-done
+  done
 
-# Ensure newline after progress bar
-echo
+  # Ensure newline after progress bar
+  echo
 
-# Final check
-FINAL_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
-FINAL_COUNT=$(echo "$FINAL_INFO" | grep -o '"points_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
+  # Final check after seeding wait
+  FINAL_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
+  FINAL_COUNT=$(echo "$FINAL_INFO" | grep -o '"points_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
 
-if [[ "$FINAL_COUNT" -eq 0 ]]; then
-  echo
-  echo "   ⚠️  WARNING: Qdrant collection '${COLLECTION_NAME}' has no vectors after ${MAX_WAIT}s"
-  echo "      The RAG system may not work properly!"
-  echo "      Check backend logs: docker-compose logs backend"
-  echo
-  read -p "   Continue anyway? (y/N): " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "   Exiting. Please check logs and try again."
-    exit 1
+  if [[ "$FINAL_COUNT" -eq 0 ]]; then
+    echo
+    echo "   ⚠️  WARNING: Qdrant collection '${COLLECTION_NAME}' has no vectors after ${MAX_WAIT}s"
+    echo "      The RAG system may not work properly!"
+    echo "      Check backend logs: docker-compose logs backend"
+    echo
+    read -p "   Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      echo "   Exiting. Please check logs and try again."
+      exit 1
+    fi
+  else
+    echo "   ✅ Ready to use! Collection has ${FINAL_COUNT} vectors"
   fi
-else
-  echo "   ✅ Ready to use! Collection has ${FINAL_COUNT} vectors"
 fi
 
 # ===========================
