@@ -659,6 +659,22 @@ This project is for educational and assessment purposes.
 - **ONNX Runtime**: Optimized inference
 
 ---
+## ⚠️Limitation
+
+	•Ingestion is not governance-grade yet: limited cleaning/normalization/structuring, and metadata/payload isn’t enforced as a strict schema → retrieval quality and traceability will be noisy until you add validation, dedup, and required fields.
+	•	Strategy routing is “baseline”: the bandit/router is mostly heuristics + fixed configs; there’s no rigorous offline tuning, calibrated rewards, counterfactual evaluation, or regression-guarded policy updates yet.
+	•	High-risk governance tiers aren’t enforced: human approval, dual control, and rollback for high-impact actions are not fully implemented—anything beyond low/medium risk relies on process rather than hard controls.
+	•	Enterprise security isn’t default-on: authn/authz, least-privilege, secret rotation, hardened defaults, and secure deployment posture are not guaranteed out of the box.
+	•	Multi-tenant isolation is not a hard guarantee: user management and policy enforcement are not complete, so tenant/role boundaries are not yet provably enforced end-to-end.
+	•	No quota / throttling guardrails by default: without rate limits, quotas, and per-tenant budgets, abuse or traffic spikes can become cost and stability incidents.
+	•	Context is “history-aware” but not “memory-managed”: long-context selection/compaction, topic memory, retention/forgetting policies, and drift control are still minimal → token bloat and inconsistent grounding in long sessions.
+	•	No systematic prompt compression/optimization loop: cost/latency and response consistency are not yet improved via automated prompt optimization and evaluation.
+	•	Reliability/HA is not inherent: single-node assumptions and missing failover patterns mean higher operational risk under outages, restarts, or load (needs clustering, redundancy, backpressure).
+	•	Observability exists, but release gating doesn’t: metrics/traces are helpful, but there’s no mandatory quality/citation/regression gate that blocks deployment on measurable degradations.
+	•	UI is demo-first: callback-heavy Streamlit glue favors fast showcasing, not clean modular boundaries and long-term maintainability.
+
+
+
 
 ## 📞 Support
 
@@ -697,6 +713,7 @@ For issues and questions:
 - [ ] Mobile-responsive UI
 - [ ] Batch document processing
 - [ ] Advanced analytics dashboard
+
 
 ---
 
