@@ -527,6 +527,8 @@ while true; do
   if [[ "$WARMUP_DONE" == "true" ]]; then
     echo
     echo "   ✅ Warm-up complete! Bandit is ready (${WARMUP_COMPLETED}/${WARMUP_TOTAL} queries)"
+    echo "   ⏳ Waiting 5 seconds for services to stabilize..."
+    sleep 5
     break
   fi
 
