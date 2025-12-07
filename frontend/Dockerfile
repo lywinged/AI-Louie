@@ -19,8 +19,12 @@ COPY app.py .
 COPY rag_progress_display.py .
 COPY rag_query_with_progress.py .
 COPY rag_tech_display.py .
-COPY pages/ ./pages/
+
+# Copy optional directories (use wildcards to avoid build failures if missing)
 COPY components/ ./components/
+
+# Create pages directory (in case it doesn't exist or is empty)
+RUN mkdir -p ./pages
 
 # Expose Streamlit port
 EXPOSE 8501
