@@ -252,6 +252,20 @@ echo_hr
 echo "🔑 Checking OpenAI API Key"
 echo_hr
 
+# Create .env from .env.example if it doesn't exist
+if [[ ! -f .env ]]; then
+  if [[ -f .env.example ]]; then
+    echo "📋 Creating .env from .env.example..."
+    cp .env.example .env
+    echo "   ✓ Created .env file"
+  else
+    echo "⚠️  Neither .env nor .env.example found"
+  fi
+fi
+
+# Initialize EXISTING_KEY as empty
+EXISTING_KEY=""
+
 # Load .env file if it exists
 if [[ -f .env ]]; then
   # Extract OPENAI_API_KEY from .env (handle commented lines and empty values)
