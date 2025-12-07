@@ -493,57 +493,67 @@ else
 fi
 
 # ===========================
-# Step 6: Smart RAG bandit warm-up (requires backend to be up)
+# Step 6: Wait for Smart RAG bandit warm-up (backend handles this automatically)
 # ===========================
 echo
 echo_hr
-echo "🎯 Smart RAG Bandit Warm-up"
+echo "🎯 Checking Smart RAG Bandit Warm-up Status"
 echo_hr
 
-# Check if warm-up is needed
+# Check if warm-up is needed by querying backend
+WARMUP_MAX_WAIT=180  # Maximum 3 minutes wait for warm-up
+WARMUP_CHECK_INTERVAL=3
+WARMUP_START_TIME=$(date +%s)
+
+# Quick check if weights already exist (skip wait)
 if [[ -f "cache/smart_bandit_state.json" ]] || [[ -f "config/default_bandit_state.json" ]]; then
-  echo "   ✅ Bandit weights found - skipping warm-up"
+  echo "   ✅ Bandit weights found - warm-up not needed"
   echo "      Using existing state file"
-elif ! command -v python3 >/dev/null 2>&1; then
-  echo "   ⚠️  python3 not found, skipping warm-up"
-  echo "      Install Python 3 to enable bandit warm-up"
-elif [[ ! -f ".venv/bin/activate" ]]; then
-  echo "   ⚠️  .venv not found, skipping warm-up"
-  echo "      Create virtual environment with: python3 -m venv .venv && .venv/bin/pip install requests"
 else
-  # Run warm-up with progress display
-  echo "   Starting bandit warm-up (3 rounds of testing)..."
-  echo "   This optimizes RAG strategy selection for better accuracy"
+  echo "   Waiting for backend to complete warm-up..."
+  echo "   (Backend automatically runs warm-up on first start)"
   echo
 
-  (
-    source .venv/bin/activate
-    python scripts/warm_smart_bandit.py --backend "http://localhost:${BACKEND_PORT}" --rounds 3
-  ) &
-
-  WARMUP_PID=$!
-
-  # Show progress while warm-up runs
-  WARMUP_START=$(date +%s)
   SPIN_CHARS="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  SPIN_INDEX=0
 
-  while kill -0 $WARMUP_PID 2>/dev/null; do
-    WARMUP_ELAPSED=$(($(date +%s) - WARMUP_START))
-    for ((i=0; i<${#SPIN_CHARS}; i++)); do
-      printf "\r   ${SPIN_CHARS:$i:1} Warming up bandit... ${WARMUP_ELAPSED}s elapsed"
-      sleep 0.1
-    done
+  while true; do
+    # Query backend for warm-up status
+    WARMUP_STATUS=$(curl -s "http://localhost:${BACKEND_PORT}/api/rag/smart-status" 2>/dev/null || echo "{}")
+    WARMUP_ENABLED=$(echo "$WARMUP_STATUS" | grep -o '"enabled":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
+    WARMUP_DONE=$(echo "$WARMUP_STATUS" | grep -o '"done":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
+    WARMUP_STARTED=$(echo "$WARMUP_STATUS" | grep -o '"started":[^,}]*' | grep -o '[^:]*$' | tr -d ' ')
+
+    WARMUP_ELAPSED=$(($(date +%s) - WARMUP_START_TIME))
+
+    # Check if warm-up is complete
+    if [[ "$WARMUP_DONE" == "true" ]]; then
+      echo
+      echo "   ✅ Warm-up complete! Bandit is ready"
+      break
+    fi
+
+    # Check if warm-up is disabled
+    if [[ "$WARMUP_ENABLED" == "false" ]]; then
+      echo
+      echo "   ℹ️  Warm-up disabled - skipping"
+      break
+    fi
+
+    # Check timeout
+    if [[ $WARMUP_ELAPSED -ge $WARMUP_MAX_WAIT ]]; then
+      echo
+      echo "   ⚠️  Warm-up timeout after ${WARMUP_MAX_WAIT}s - continuing anyway"
+      echo "      Bandit will use default weights"
+      break
+    fi
+
+    # Show spinner
+    printf "\r   ${SPIN_CHARS:$SPIN_INDEX:1} Warming up bandit (backend)... ${WARMUP_ELAPSED}s elapsed"
+    SPIN_INDEX=$(( (SPIN_INDEX + 1) % ${#SPIN_CHARS} ))
+
+    sleep $WARMUP_CHECK_INTERVAL
   done
-
-  wait $WARMUP_PID
-  WARMUP_EXIT=$?
-
-  echo
-  if [[ $WARMUP_EXIT -eq 0 ]]; then
-    echo "   ✅ Warm-up complete! Bandit weights saved to cache/"
-  else
-    echo "   ⚠️  Warm-up failed (check backend health/logs)"
-  fi
 fi
 
 # ===========================
