@@ -386,28 +386,69 @@ fi
 # Step 5b: Wait for Qdrant seeding to complete
 # ===========================
 echo
-echo "Checking Qdrant collection seeding status..."
+echo_hr
+echo "⏳ Waiting for Qdrant Collection Seeding"
+echo_hr
 COLLECTION_NAME="${QDRANT_COLLECTION:-assessment_docs_minilm}"
 MAX_WAIT=120  # Maximum 2 minutes wait
 WAIT_INTERVAL=5
+EXPECTED_VECTORS=15000  # Approximate expected vector count
+
+echo "Collection: ${COLLECTION_NAME}"
+echo "Checking every ${WAIT_INTERVAL}s (max ${MAX_WAIT}s)..."
+echo
+
+PREV_COUNT=0
+START_TIME=$(date +%s)
 
 for ((i=1; i<=MAX_WAIT/WAIT_INTERVAL; i++)); do
   # Check if collection exists and has vectors
   COLLECTION_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
   VECTOR_COUNT=$(echo "$COLLECTION_INFO" | grep -o '"vectors_count":[0-9]*' | grep -o '[0-9]*' || echo "0")
 
+  ELAPSED=$(($(date +%s) - START_TIME))
+
   if [[ "$VECTOR_COUNT" -gt 0 ]]; then
-    echo "   ✅ Qdrant collection '${COLLECTION_NAME}' ready with ${VECTOR_COUNT} vectors"
-    break
-  else
-    if [[ $i -eq 1 ]]; then
-      echo "   ⏳ Waiting for Qdrant to seed collection '${COLLECTION_NAME}'..."
-      echo "      This may take 30-120 seconds depending on your system..."
+    # Calculate progress percentage
+    PROGRESS=$((VECTOR_COUNT * 100 / EXPECTED_VECTORS))
+    if [[ $PROGRESS -gt 100 ]]; then PROGRESS=100; fi
+
+    # Create progress bar
+    BAR_LENGTH=50
+    FILLED=$((PROGRESS * BAR_LENGTH / 100))
+    BAR=$(printf "%${FILLED}s" | tr ' ' '█')
+    EMPTY=$(printf "%$((BAR_LENGTH - FILLED))s" | tr ' ' '░')
+
+    # Calculate seeding rate
+    if [[ $PREV_COUNT -gt 0 && $VECTOR_COUNT -gt $PREV_COUNT ]]; then
+      RATE=$(( (VECTOR_COUNT - PREV_COUNT) / WAIT_INTERVAL ))
+      RATE_STR="${RATE} vectors/sec"
+    else
+      RATE_STR="calculating..."
     fi
-    echo "      Attempt $i/$((MAX_WAIT/WAIT_INTERVAL)): Collection has ${VECTOR_COUNT} vectors, waiting ${WAIT_INTERVAL}s..."
+
+    # Clear line and show progress
+    printf "\r   [${BAR}${EMPTY}] ${PROGRESS}%% | ${VECTOR_COUNT} vectors | ${RATE_STR} | ${ELAPSED}s elapsed"
+
+    PREV_COUNT=$VECTOR_COUNT
+
+    # Check if seeding is complete (no new vectors in last 2 checks)
+    if [[ $i -gt 2 ]] && [[ $VECTOR_COUNT -eq $PREV_COUNT ]]; then
+      echo
+      echo "   ✅ Seeding complete! Collection has ${VECTOR_COUNT} vectors"
+      break
+    fi
+
+    sleep $WAIT_INTERVAL
+  else
+    # Still waiting for first vectors
+    printf "\r   ⏳ Waiting for seeding to start... ${ELAPSED}s elapsed (attempt $i/$((MAX_WAIT/WAIT_INTERVAL)))"
     sleep $WAIT_INTERVAL
   fi
 done
+
+# Ensure newline after progress bar
+echo
 
 # Final check
 FINAL_INFO=$(curl -s "http://localhost:${QDRANT_PORT}/collections/${COLLECTION_NAME}" 2>/dev/null || echo "{}")
@@ -430,24 +471,56 @@ else
 fi
 
 # ===========================
-# Step 6: Optional Smart RAG bandit warm-up (requires backend to be up)
+# Step 6: Smart RAG bandit warm-up (requires backend to be up)
 # ===========================
-if [[ "${WARM_SMART_RAG:-0}" == "1" ]]; then
-  echo "Warming Smart RAG bandit..."
-  # Only warm up if no bandit state file exists
-  if [[ -f "cache/smart_bandit_state.json" ]] || [[ -f "config/default_bandit_state.json" ]]; then
-    echo "   ✅ Bandit weights found - skipping warm-up"
-  elif ! command -v python3 >/dev/null 2>&1; then
-    echo "   WARNING: python3 not found, skipping warm-up"
-  elif [[ ! -f ".venv/bin/activate" ]]; then
-    echo "   WARNING: .venv not found; install requests and create venv first, skipping warm-up"
+echo
+echo_hr
+echo "🎯 Smart RAG Bandit Warm-up"
+echo_hr
+
+# Check if warm-up is needed
+if [[ -f "cache/smart_bandit_state.json" ]] || [[ -f "config/default_bandit_state.json" ]]; then
+  echo "   ✅ Bandit weights found - skipping warm-up"
+  echo "      Using existing state file"
+elif ! command -v python3 >/dev/null 2>&1; then
+  echo "   ⚠️  python3 not found, skipping warm-up"
+  echo "      Install Python 3 to enable bandit warm-up"
+elif [[ ! -f ".venv/bin/activate" ]]; then
+  echo "   ⚠️  .venv not found, skipping warm-up"
+  echo "      Create virtual environment with: python3 -m venv .venv && .venv/bin/pip install requests"
+else
+  # Run warm-up with progress display
+  echo "   Starting bandit warm-up (3 rounds of testing)..."
+  echo "   This optimizes RAG strategy selection for better accuracy"
+  echo
+
+  (
+    source .venv/bin/activate
+    python scripts/warm_smart_bandit.py --backend "http://localhost:${BACKEND_PORT}" --rounds 3
+  ) &
+
+  WARMUP_PID=$!
+
+  # Show progress while warm-up runs
+  WARMUP_START=$(date +%s)
+  SPIN_CHARS="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+  while kill -0 $WARMUP_PID 2>/dev/null; do
+    WARMUP_ELAPSED=$(($(date +%s) - WARMUP_START))
+    for ((i=0; i<${#SPIN_CHARS}; i++)); do
+      printf "\r   ${SPIN_CHARS:$i:1} Warming up bandit... ${WARMUP_ELAPSED}s elapsed"
+      sleep 0.1
+    done
+  done
+
+  wait $WARMUP_PID
+  WARMUP_EXIT=$?
+
+  echo
+  if [[ $WARMUP_EXIT -eq 0 ]]; then
+    echo "   ✅ Warm-up complete! Bandit weights saved to cache/"
   else
-    # Use venv with requests installed
-    echo "   ⚠️  No bandit weights found - running warm-up in background..."
-    (
-      source .venv/bin/activate
-      python scripts/warm_smart_bandit.py --backend "http://localhost:${BACKEND_PORT}"
-    ) || echo "   WARNING: Warm-up failed (check backend health/logs)"
+    echo "   ⚠️  Warm-up failed (check backend health/logs)"
   fi
 fi
 
