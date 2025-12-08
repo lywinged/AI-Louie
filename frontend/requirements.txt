@@ -1,5 +1,5 @@
 # Streamlit Framework
-streamlit==1.29.0
+streamlit>=1.41.0
 
 # Data Visualization
 plotly==5.18.0
